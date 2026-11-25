@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	portalTestOrigin = "https://pristavka.example.test"
+	portalTestOrigin = "https://h96-host.example.test"
 	portalTestID     = "0123456789abcdef0123456789abcdef"
 )
 

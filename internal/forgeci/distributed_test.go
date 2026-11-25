@@ -15,6 +15,9 @@ func TestDistributedWorkflowContracts(t *testing.T) {
 	if _, e := os.Stat(filepath.Join("..", "..", ".github", "workflows", "distributed.yml")); os.IsNotExist(e) {
 		t.Skip("workflow configs are outside the sealed module snapshot")
 	}
+	if raw, _ := os.ReadFile(filepath.Join("..", "..", ".sourcecraft", "ci.yaml")); strings.HasPrefix(string(raw), "# Open core CI") {
+		t.Skip("public open-core export: the private distributed CI configs are replaced")
+	}
 	python, e := exec.LookPath("python3")
 	if e != nil {
 		t.Fatal(e)

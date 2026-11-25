@@ -103,8 +103,8 @@ func inspect(faceid, main string) (Report, error) {
 			report.Sites = append(report.Sites, Site{Name: "http://:8798"})
 			current = &report.Sites[len(report.Sites)-1]
 			continue
-		case "pristavka.example.ts.net {":
-			report.Sites = append(report.Sites, Site{Name: "pristavka.example.ts.net"})
+		case "h96-host.example.ts.net {":
+			report.Sites = append(report.Sites, Site{Name: "h96-host.example.ts.net"})
 			current = &report.Sites[len(report.Sites)-1]
 			continue
 		}
@@ -137,8 +137,8 @@ func inspect(faceid, main string) (Report, error) {
 				current.Upstream = "UNEXPECTED_REDACTED"
 			}
 		case strings.HasPrefix(line, "header_up Host "):
-			if strings.TrimPrefix(line, "header_up Host ") == "pristavka.example.ts.net" {
-				current.ForwardedHost = "pristavka.example.ts.net"
+			if strings.TrimPrefix(line, "header_up Host ") == "h96-host.example.ts.net" {
+				current.ForwardedHost = "h96-host.example.ts.net"
 			} else {
 				current.ForwardedHost = "UNEXPECTED_REDACTED"
 			}
@@ -169,7 +169,7 @@ func inspect(faceid, main string) (Report, error) {
 	if len(report.Sites) == 2 {
 		a, b := report.Sites[0], report.Sites[1]
 		report.RoutesMatch = len(a.AllowedPaths) > 0 && strings.Join(a.AllowedPaths, "|") == strings.Join(b.AllowedPaths, "|") && a.UnknownRoutes == 0 && b.UnknownRoutes == 0
-		report.LANConfigPresent = b.Name == "pristavka.example.ts.net" && b.Bind == "192.168.77.10" && b.Upstream == "127.0.0.1:8799" && b.ForwardedHost == b.Name && b.ForwardedProto == "https" && report.RoutesMatch
+		report.LANConfigPresent = b.Name == "h96-host.example.ts.net" && b.Bind == "192.168.77.10" && b.Upstream == "127.0.0.1:8799" && b.ForwardedHost == b.Name && b.ForwardedProto == "https" && report.RoutesMatch
 	}
 	if !report.LANConfigPresent {
 		report.Warnings = append(report.Warnings, "LAN Face ID/OAuth configuration is incomplete or changed; this is not an HTTPS reachability probe")

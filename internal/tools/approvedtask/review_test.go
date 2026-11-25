@@ -58,7 +58,7 @@ const id = "01234567890123456789012345678901";
 deliver({id:1, result:{}});
 deliver({method:"ui/notifications/tool-result", params:{structuredContent:{
   id, state:"AWAITING_FACE_ID", approval_state:"awaiting_face_id",
-  approval_url:"https://pristavka.example/approval/01234567"
+  approval_url:"https://h96-host.example/approval/01234567"
 }}});
 check(!nodes.run.disabled, "prepared task is not ready");
 nodes.run.onclick();

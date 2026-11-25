@@ -16,10 +16,10 @@ func TestMCP225CaddyTemplateHasMatchingLANFaceIDRoutes(t *testing.T) {
 	for _, want := range []string{
 		"http://:8798 {",
 		"bind 172.17.0.1",
-		"pristavka.example.ts.net {",
+		"h96-host.example.ts.net {",
 		"bind 192.168.77.10",
 		"reverse_proxy 127.0.0.1:8799",
-		"header_up Host pristavka.example.ts.net",
+		"header_up Host h96-host.example.ts.net",
 		"header_up X-Forwarded-Proto https",
 	} {
 		if !strings.Contains(caddy, want) {

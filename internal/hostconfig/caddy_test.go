@@ -10,8 +10,8 @@ import (
 
 func faceIDFixture(extra string) string {
 	route := "@allowed path /approval/* /oauth/* /mcp /.well-known/oauth-authorization-server"
-	return "http://:8798 {\n    bind 172.17.0.1\n    " + route + "\n    reverse_proxy 127.0.0.1:8799 {\n        header_up Host pristavka.example.ts.net\n        header_up X-Forwarded-Proto https\n    }\n}\n" +
-		"pristavka.example.ts.net {\n    bind 192.168.77.10\n    " + route + "\n    reverse_proxy 127.0.0.1:8799 {\n        header_up Host pristavka.example.ts.net\n        header_up X-Forwarded-Proto https\n    }\n" + extra + "\n}\n"
+	return "http://:8798 {\n    bind 172.17.0.1\n    " + route + "\n    reverse_proxy 127.0.0.1:8799 {\n        header_up Host h96-host.example.ts.net\n        header_up X-Forwarded-Proto https\n    }\n}\n" +
+		"h96-host.example.ts.net {\n    bind 192.168.77.10\n    " + route + "\n    reverse_proxy 127.0.0.1:8799 {\n        header_up Host h96-host.example.ts.net\n        header_up X-Forwarded-Proto https\n    }\n" + extra + "\n}\n"
 }
 
 func TestMCP247248249CaddyInspectReturnsOnlySafeStructuredFacts(t *testing.T) {

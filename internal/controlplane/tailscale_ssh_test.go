@@ -7,10 +7,10 @@ import (
 	"testing"
 )
 
-// Real kernel encoding: 0.0.0.0:22 LISTEN, 100.77.0.10:22 <- 100.77.1.11:57234 ESTABLISHED.
+// Real kernel encoding: 0.0.0.0:22 LISTEN, 100.64.10.20:22 <- 100.64.30.40:57234 ESTABLISHED.
 const procTCP = `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
    0: 00000000:0016 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1 1 0 100 0 0 10 0
-   1: 16995964:0016 72394864:DF92 01 00000000:00000000 02:000A7B2E 00000000     0        0 2 2 0 20 4 30 10 -1
+   1: 140A4064:0016 281E4064:DF92 01 00000000:00000000 02:000A7B2E 00000000     0        0 2 2 0 20 4 30 10 -1
 `
 
 const procTCP6 = `  sl  local_address                         remote_address                        st
@@ -33,7 +33,7 @@ func TestParseProcNetTCP(t *testing.T) {
 		t.Fatalf("listener: %+v", socks[0])
 	}
 	est := socks[1]
-	if est.Local.String() != "100.77.0.10" || est.Remote.String() != "100.77.1.11" ||
+	if est.Local.String() != "100.64.10.20" || est.Remote.String() != "100.64.30.40" ||
 		est.RemotePort != 0xDF92 || est.State != tcpEstablished {
 		t.Fatalf("session: %+v", est)
 	}
@@ -41,8 +41,8 @@ func TestParseProcNetTCP(t *testing.T) {
 	if len(v6) != 1 || !v6[0].Local.IsUnspecified() || v6[0].LocalPort != 22 {
 		t.Fatalf("tcp6: %+v", v6)
 	}
-	ip, _, ok := decodeProcAddr("0000000000000000FFFF000072394864:0016")
-	if !ok || ip.String() != "100.77.1.11" {
+	ip, _, ok := decodeProcAddr("0000000000000000FFFF0000281E4064:0016")
+	if !ok || ip.String() != "100.64.30.40" {
 		t.Fatalf("v4-mapped: %v %v", ip, ok)
 	}
 	if got := parseProcNetTCP([]byte("   0: zz:0016 00000000:0000 0A\n")); len(got) != 0 {
@@ -81,8 +81,8 @@ func TestTailscaleRuleOrder(t *testing.T) {
 }
 
 func TestEvaluateTailscaleSSH(t *testing.T) {
-	self := []net.IP{net.ParseIP("100.77.0.10")}
-	peers := map[string]bool{"100.77.1.11": true}
+	self := []net.IP{net.ParseIP("100.64.10.20")}
+	peers := map[string]bool{"100.64.30.40": true}
 	socks := parseProcNetTCP([]byte(procTCP))
 	if ok, reason := evaluateTailscaleSSH(sshEvidence{SelfIPs: self, OnlinePeers: peers, Sockets: socks, RulesOK: true}); !ok {
 		t.Fatalf("expected verified: %s", reason)
@@ -114,7 +114,7 @@ func sshControlService(t *testing.T, rules string) *Service {
 	s.run = func(ctx context.Context, path string, args ...string) ([]byte, bool, error) {
 		switch path {
 		case "/fake/tailscale":
-			return []byte(`{"BackendState":"Running","TailscaleIPs":["100.77.0.10"],"Self":{"Online":true},"Peer":{"nodekey:phone":{"HostName":"localhost","DNSName":"phone.example.ts.net.","OS":"iOS","TailscaleIPs":["100.77.1.11"],"Online":true}}}`), false, nil
+			return []byte(`{"BackendState":"Running","TailscaleIPs":["100.64.10.20"],"Self":{"Online":true},"Peer":{"nodekey:phone":{"HostName":"localhost","DNSName":"phone.example.ts.net.","OS":"iOS","TailscaleIPs":["100.64.30.40"],"Online":true}}}`), false, nil
 		case "/fake/ip":
 			if len(args) > 1 && args[1] == "rule" {
 				return []byte(rules), false, nil

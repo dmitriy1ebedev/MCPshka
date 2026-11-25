@@ -40,13 +40,13 @@ const policy = `{"repository":"o/r","exclude":["docs/history","docs/ISSUE_*.md"]
 func TestExportDropsPrivatePathsAndReplacesIdentifiers(t *testing.T) {
 	repo, commit := gitRepo(t, map[string]string{
 		ConfigPath:                 policy,
-		"main.go":                  "package main // bind 192.168.77.10, not 192.168.0.1730 nor 10.192.168.0.173; peer host.tail9.ts.net\n",
+		"main.go":                  "package main // bind 192.168.9.73, not 192.168.9.730 nor 10.192.168.9.73; peer host.tail9.ts.net\n",
 		"docs/history/x.md":        "секрет владельца",
 		"docs/ISSUE_REGISTRY_1.md": "карточки",
-		"docs/README.md":           "MAC 02:00:00:00:00:46",
+		"docs/README.md":           "MAC 64:00:00:AA:BB:CC",
 		"fake_test.go":             "var k = \"ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890\"\n",
 	})
-	rules := []Rule{{From: "192.168.77.10", To: "192.168.77.10"}, {From: "tail9.ts.net", To: "example.ts.net"}, {From: "02:00:00:00:00:46", To: "02:00:00:00:00:46"}}
+	rules := []Rule{{From: "192.168.9.73", To: "192.168.77.10"}, {From: "tail9.ts.net", To: "example.ts.net"}, {From: "64:00:00:aa:bb:cc", To: "02:00:00:00:00:46"}}
 	dest := filepath.Join(t.TempDir(), "out")
 	m, err := Export(context.Background(), repo, commit, dest, rules)
 	if err != nil {
@@ -56,7 +56,7 @@ func TestExportDropsPrivatePathsAndReplacesIdentifiers(t *testing.T) {
 		t.Fatalf("manifest %+v", m)
 	}
 	src, _ := os.ReadFile(filepath.Join(dest, "main.go"))
-	if want := "bind 192.168.77.10, not 192.168.0.1730 nor 10.192.168.0.173; peer host.example.ts.net"; !strings.Contains(string(src), want) {
+	if want := "bind 192.168.77.10, not 192.168.9.730 nor 10.192.168.9.73; peer host.example.ts.net"; !strings.Contains(string(src), want) {
 		t.Fatalf("main.go: %s", src)
 	}
 	if _, err := os.Stat(filepath.Join(dest, "docs/history")); !os.IsNotExist(err) {
@@ -115,10 +115,10 @@ func TestExportBlocksRealSecretsAndLeftovers(t *testing.T) {
 
 func TestPlaceholdersKeepTheAddressClass(t *testing.T) {
 	got := map[string]string{}
-	for _, r := range placeholders([]string{"192.168.77.10", "127.0.0.1", "172.17.0.1", "100.77.0.10", "fd7a:115c:a1e0::77:10"}, []string{"100.77.1.11"}) {
+	for _, r := range placeholders([]string{"192.168.9.73", "127.0.0.1", "172.17.0.1", "100.64.10.20", "fd7a:115c:a1e0::1:2"}, []string{"100.64.30.40"}) {
 		got[r.From] = r.To
 	}
-	want := map[string]string{"192.168.77.10": "192.168.77.10", "100.77.0.10": "100.77.0.10", "fd7a:115c:a1e0::77:10": "fd7a:115c:a1e0::77:10", "100.77.1.11": "100.77.1.10"}
+	want := map[string]string{"192.168.9.73": "192.168.77.10", "100.64.10.20": "100.77.0.10", "fd7a:115c:a1e0::1:2": "fd7a:115c:a1e0::77:10", "100.64.30.40": "100.77.1.10"}
 	if len(got) != len(want) {
 		t.Fatalf("%v", got)
 	}

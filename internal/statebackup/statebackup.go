@@ -30,7 +30,7 @@ import (
 
 const (
 	// FolderID is the only approved destination (owner's private Drive folder).
-	FolderID    = "1dmGZnMvzAWIfOmBeYmOHq6-CmWb67wUg"
+	FolderID    = "0000000000000000000000000000000ex"
 	ageBin      = "/usr/local/libexec/mcpshka-age"
 	rcloneBin   = "/usr/bin/rclone"
 	sqliteBin   = "/usr/bin/sqlite3"

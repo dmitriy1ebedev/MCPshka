@@ -19,7 +19,7 @@ func compactDashboard(t *testing.T) string {
   " ! fix    | CPU 67°C\n" +
   " ! fix    | память: доступно 47%, swap 76% - больше всех: python3\n" +
   " MCPshka  | ok 0.11.8 - песочница свободна - Face ID до 13.11 08:30\n" +
-  " Сеть     | 192.168.77.10 -> 31.77.114.122 - Tailscale ok - VPN 2627 доменов\n" +
+  " Сеть     | 192.168.77.10 -> 203.0.113.20 - Tailscale ok - VPN 2627 доменов\n" +
   " Lane     | ok 1.5.1 - DNS: политика Lane - выходы 10/10\n" +
   " Сервисы  | ok 14/14\nDASH\n")
 }
@@ -90,7 +90,7 @@ func serviceDashboard(t *testing.T, status string) string {
  content := "#!/bin/sh\ncat <<'DASH'\n" +
   " H96      | 2д 15ч 44м - load 1.33 - RAM 1.7/3.7G - swap 1.4G - диск 74% - 64°C\n" +
   " MCPshka  | ok 0.11.8 - idle\n" +
-  " Сеть     | 192.168.77.10 -> 191.217.217.50 - Tailscale ok\n" +
+  " Сеть     | 192.168.77.10 -> 203.0.113.21 - Tailscale ok\n" +
   " Lane     | ok 1.5.1\n" +
   " Сервисы  | " + status + "\nDASH\n"
  return script(t,t.TempDir(),"service-dashboard",content)

@@ -38,8 +38,12 @@ func TestNothingToLose(t *testing.T) {
 	if why := NothingToLose(dir); why != "HEAD is not in main yet" {
 		t.Fatalf("unmerged branch: %q", why)
 	}
-	if why := NothingToLose("/root/repos/definitely-gone-worktree-xyz"); why != "" {
-		t.Fatalf("removed repo worktree kept: %q", why)
+	// Only where /root/repos is visible (H96, root CI): an unprivileged CI
+	// user cannot tell a removed worktree from an unreadable one.
+	if _, err := os.Stat("/root/repos"); err == nil {
+		if why := NothingToLose("/root/repos/definitely-gone-worktree-xyz"); why != "" {
+			t.Fatalf("removed repo worktree kept: %q", why)
+		}
 	}
 	if why := NothingToLose(filepath.Join(t.TempDir(), "gone")); why == "" {
 		t.Fatal("an invisible path must not count as nothing to lose")

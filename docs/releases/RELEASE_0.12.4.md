@@ -12,4 +12,4 @@
 
 ## Прочее
 
-Упаковка туннеля Face ID (`packaging/tunnel/mcpshka-faceid.caddy`) и справка `providers` называют адрес `pristavka…ts.net`, на котором Face ID работает с 13.11.
+Упаковка туннеля Face ID (`packaging/tunnel/mcpshka-faceid.caddy`) и справка `providers` называют адрес `h96-host…ts.net`, на котором Face ID работает с 13.11.
