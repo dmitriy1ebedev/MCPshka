@@ -179,73 +179,11 @@ func LoadPlan(ctx context.Context, repo, commit string) (Plan, error) {
 	if e != nil {
 		return Plan{}, e
 	}
-	var fs syscall.Statfs_t
-	if syscall.Statfs(os.TempDir(), &fs) != nil || fs.Bavail*uint64(fs.Bsize) < max(uint64(3<<30), fs.Blocks*uint64(fs.Bsize)/10)+(64<<20) {
-		return Plan{}, errors.New("temporary disk reserve unavailable")
-	}
-	dir, e := os.MkdirTemp("", "mcpshka-shard-")
+	dir, e := materialize(ctx, repo, commit)
 	if e != nil {
 		return Plan{}, e
 	}
 	defer os.RemoveAll(dir)
-	if os.Geteuid() == 0 {
-		if e = os.Chown(dir, 994, 994); e != nil {
-			return Plan{}, e
-		}
-	}
-	archive, e := command(ctx, repo, "git", "--no-replace-objects", "-c", "safe.directory="+repo, "archive", "--format=tar", commit)
-	if e != nil {
-		return Plan{}, e
-	}
-	tr := tar.NewReader(bytes.NewReader(archive))
-	var used int64
-	files := 0
-	for {
-		h, e := tr.Next()
-		if e == io.EOF {
-			break
-		}
-		if e != nil {
-			return Plan{}, e
-		}
-		if h.Typeflag == tar.TypeXGlobalHeader {
-			continue
-		}
-		name := strings.TrimSuffix(h.Name, "/")
-		if name == "" || filepath.Clean(name) != name || filepath.IsAbs(name) || strings.HasPrefix(name, "../") || strings.Contains(name, "\\") {
-			return Plan{}, errors.New("unsafe snapshot path")
-		}
-		dest := filepath.Join(dir, name)
-		if h.Typeflag == tar.TypeDir {
-			if e = os.MkdirAll(dest, 0755); e != nil {
-				return Plan{}, e
-			}
-			continue
-		}
-		if h.Typeflag != tar.TypeReg {
-			return Plan{}, errors.New("snapshot must contain regular files")
-		}
-		used += h.Size
-		files++
-		if used > 64<<20 || files > 30000 {
-			return Plan{}, errors.New("snapshot budget exceeded")
-		}
-		if e = os.MkdirAll(filepath.Dir(dest), 0755); e != nil {
-			return Plan{}, e
-		}
-		f, e := os.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
-		if e != nil {
-			return Plan{}, e
-		}
-		_, e = io.CopyN(f, tr, h.Size)
-		ce := f.Close()
-		if e != nil {
-			return Plan{}, e
-		}
-		if ce != nil {
-			return Plan{}, ce
-		}
-	}
 	packages, counts, weights, e := inventory(ctx, dir)
 	if e != nil {
 		return Plan{}, e
@@ -283,4 +221,84 @@ func identity(ctx context.Context, dir string) (string, string, string, error) {
 		return "", "", "", errors.New("snapshot has parents")
 	}
 	return commits[0], tree, head, nil
+}
+
+// materialize extracts the committed files of commit into a fresh temporary
+// directory (bounded to 64 MiB / 30000 files) owned by the Go user; the
+// caller removes it.
+func materialize(ctx context.Context, repo, commit string) (string, error) {
+	var fs syscall.Statfs_t
+	if syscall.Statfs(os.TempDir(), &fs) != nil || fs.Bavail*uint64(fs.Bsize) < max(uint64(3<<30), fs.Blocks*uint64(fs.Bsize)/10)+(64<<20) {
+		return "", errors.New("temporary disk reserve unavailable")
+	}
+	dir, e := os.MkdirTemp("", "mcpshka-shard-")
+	if e != nil {
+		return "", e
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			os.RemoveAll(dir)
+		}
+	}()
+	if os.Geteuid() == 0 {
+		if e = os.Chown(dir, 994, 994); e != nil {
+			return "", e
+		}
+	}
+	archive, e := command(ctx, repo, "git", "--no-replace-objects", "-c", "safe.directory="+repo, "archive", "--format=tar", commit)
+	if e != nil {
+		return "", e
+	}
+	tr := tar.NewReader(bytes.NewReader(archive))
+	var used int64
+	files := 0
+	for {
+		h, e := tr.Next()
+		if e == io.EOF {
+			break
+		}
+		if e != nil {
+			return "", e
+		}
+		if h.Typeflag == tar.TypeXGlobalHeader {
+			continue
+		}
+		name := strings.TrimSuffix(h.Name, "/")
+		if name == "" || filepath.Clean(name) != name || filepath.IsAbs(name) || strings.HasPrefix(name, "../") || strings.Contains(name, "\\") {
+			return "", errors.New("unsafe snapshot path")
+		}
+		dest := filepath.Join(dir, name)
+		if h.Typeflag == tar.TypeDir {
+			if e = os.MkdirAll(dest, 0755); e != nil {
+				return "", e
+			}
+			continue
+		}
+		if h.Typeflag != tar.TypeReg {
+			return "", errors.New("snapshot must contain regular files")
+		}
+		used += h.Size
+		files++
+		if used > 64<<20 || files > 30000 {
+			return "", errors.New("snapshot budget exceeded")
+		}
+		if e = os.MkdirAll(filepath.Dir(dest), 0755); e != nil {
+			return "", e
+		}
+		f, e := os.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+		if e != nil {
+			return "", e
+		}
+		_, e = io.CopyN(f, tr, h.Size)
+		ce := f.Close()
+		if e != nil {
+			return "", e
+		}
+		if ce != nil {
+			return "", ce
+		}
+	}
+	keep = true
+	return dir, nil
 }

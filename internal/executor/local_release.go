@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mcpshka/internal/distributedci"
 	"mcpshka/internal/failure"
 	"mcpshka/internal/hostload"
 	"os"
@@ -34,7 +35,7 @@ const localBuildScript = "go version > /scratch/toolchain.txt\ngo build -p 2 -tr
 var localReleaseCommand = []string{"/bin/sh", "-ec", localBuildScript}
 
 func moduleSnapshot(pkg string) bool {
-	return pkg == moduleTestPackage || pkg == localReleasePackage || shardPackageValid(pkg)
+	return pkg == moduleTestPackage || pkg == moduleAffectedPackage || pkg == localReleasePackage || shardPackageValid(pkg)
 }
 func localReleaseCommandMatches(command []string) bool {
 	return strings.Join(command, "\x00") == strings.Join(localReleaseCommand, "\x00")
@@ -228,6 +229,9 @@ func LocalReleaseReceipt(ctx context.Context, build, test string) (releaseprep.L
 	r.TestEvidence = releaseprep.TestEvidence{ID: test, Tree: r.Tree, Conclusion: "success"}
 	switch t.Purpose {
 	case ModuleTestPurpose:
+		if t.Source.Package != moduleTestPackage {
+			return r, Hold(failure.EvidenceMissing, "TEST_EVIDENCE_PARTIAL", "release.LocalReleaseReceipt", "the integration test covered only the affected packages; a release needs the full module suite", nil)
+		}
 		r.TestEvidence.Kind = "module"
 		r.TestEvidence.Suites = map[string]string{"module": "success"}
 	case CIEvidencePurpose:
@@ -239,7 +243,7 @@ func LocalReleaseReceipt(ctx context.Context, build, test string) (releaseprep.L
 		r.TestEvidence.Suites = ev.Checks
 		if ev.Provider == "distributed" {
 			r.TestEvidence.Kind = "distributed"
-			r.TestEvidence.Suites = map[string]string{"shard-0": "success", "shard-1": "success", "shard-2": "success"}
+			r.TestEvidence.Suites = distributedci.PassedSuites()
 		}
 	default:
 		return r, Hold(failure.PolicyDenied, "EVIDENCE_KIND_INVALID", "release.LocalReleaseReceipt", "unsupported test evidence kind", nil)

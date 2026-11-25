@@ -11,6 +11,10 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "affected" {
+		// Sealed integration gate over the root-selected packages (S5.FAST.3).
+		os.Exit(distributedci.RunAffected(context.Background(), os.Getenv(distributedci.AffectedEnv), os.Stdout))
+	}
 	if len(os.Args) == 2 && (os.Args[1] == "sourcecraft" || os.Args[1] == "sourcecraft-start") {
 		ctx, cancel := context.WithTimeout(context.Background(), 40*time.Minute)
 		defer cancel()

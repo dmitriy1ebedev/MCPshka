@@ -32,3 +32,15 @@ func TestGitVerseMixedWaitingAndCancelledIsUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestGitVerseRunnerHealthReadsOnlyTheNewestPage(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Link", "<https://gitverse.ru/public/api/x?page=2&per_page=10>; rel=\"next\"")
+		w.Write([]byte(`{"workflow_runs":[{"status":"completed"}]}`))
+	}))
+	defer s.Close()
+	c := &Client{site: GitVerse, base: s.URL, http: s.Client(), token: func(Site) (string, error) { return "fixture", nil }}
+	if err := c.gitverseRunnerHealth(context.Background()); err != nil {
+		t.Fatal("a repository with more than one page of runs is healthy:", err)
+	}
+}

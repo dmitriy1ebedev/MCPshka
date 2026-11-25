@@ -7,6 +7,7 @@ import (
 	"mcpshka/internal/executor"
 	"mcpshka/internal/failure"
 	"mcpshka/internal/heavyqueue"
+	"mcpshka/internal/pipelineartifact"
 	"mcpshka/internal/recipecontract"
 	"os/exec"
 	"regexp"
@@ -26,7 +27,7 @@ func validateExecutor(args []string) error {
 	if len(args) == 4 && args[0] == "pipeline-read" && executorID.MatchString(args[1]) {
 		i, e := strconv.Atoi(args[2])
 		off, e2 := strconv.ParseInt(args[3], 10, 64)
-		if e == nil && e2 == nil && i >= 0 && i < 16 && strconv.Itoa(i) == args[2] && off >= 0 && off <= executor.MaxPipelineArtifact && strconv.FormatInt(off, 10) == args[3] {
+		if e == nil && e2 == nil && i >= 0 && i < 16 && strconv.Itoa(i) == args[2] && off >= 0 && off <= pipelineartifact.MaxArtifact && strconv.FormatInt(off, 10) == args[3] {
 			return nil
 		}
 		return executor.ErrHold

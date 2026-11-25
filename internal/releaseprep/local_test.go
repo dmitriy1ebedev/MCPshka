@@ -297,11 +297,11 @@ func TestLocalReceiptAcceptsFullGitHubEvidence(t *testing.T) {
 }
 
 func TestDistributedLocalReceiptRequiresAllShards(t *testing.T) {
-	raw := []byte(`{"schema":"mcpshka.operator-verified-local/v1","provider":"h96-local","repository":"dmitriy1ebedev/mcpshka","source_sha":"` + strings.Repeat("a", 40) + `","head_sha":"` + strings.Repeat("a", 40) + `","tree":"` + strings.Repeat("b", 40) + `","source_digest":"` + strings.Repeat("c", 64) + `","build_permit":"` + strings.Repeat("d", 32) + `","build_env_digest":"` + strings.Repeat("e", 64) + `","binary_sha256":"` + strings.Repeat("f", 64) + `","broker_binary_sha256":"` + strings.Repeat("1", 64) + `","test_evidence":{"kind":"distributed","id":"` + strings.Repeat("2", 32) + `","tree":"` + strings.Repeat("b", 40) + `","conclusion":"success","suites":{"shard-0":"success","shard-1":"success","shard-2":"success"}}}`)
+	raw := []byte(`{"schema":"mcpshka.operator-verified-local/v1","provider":"h96-local","repository":"dmitriy1ebedev/mcpshka","source_sha":"` + strings.Repeat("a", 40) + `","head_sha":"` + strings.Repeat("a", 40) + `","tree":"` + strings.Repeat("b", 40) + `","source_digest":"` + strings.Repeat("c", 64) + `","build_permit":"` + strings.Repeat("d", 32) + `","build_env_digest":"` + strings.Repeat("e", 64) + `","binary_sha256":"` + strings.Repeat("f", 64) + `","broker_binary_sha256":"` + strings.Repeat("1", 64) + `","test_evidence":{"kind":"distributed","id":"` + strings.Repeat("2", 32) + `","tree":"` + strings.Repeat("b", 40) + `","conclusion":"success","suites":{"shard-0":"success","shard-1":"success","shard-2":"success","shard-3":"success"}}}`)
 	if _, e := ParseLocalReceipt(raw); e != nil {
 		t.Fatal(e)
 	}
-	raw = []byte(strings.Replace(string(raw), `,"shard-2":"success"`, "", 1))
+	raw = []byte(strings.Replace(string(raw), `,"shard-3":"success"`, "", 1))
 	if _, e := ParseLocalReceipt(raw); e == nil {
 		t.Fatal("partial distributed receipt passed")
 	}

@@ -12,6 +12,23 @@ The goal is not to clone a general remote desktop product. The goal is to provid
 - Открытое ядро выгружается инструментом `opencore_publish` из канонического main: секреты, коннекторы и домашние адреса владельца в публичное дерево не попадают (`.mcpshka/opencore.json`).
 - Разделы ниже про 0.1.x — история архитектуры.
 
+## Чем вдохновлялись
+
+MCPshka выросла из чужих хороших идей; спасибо авторам. Ниже — откуда что взято.
+
+- [Desktop Commander MCP](https://github.com/wonderwhy-er/DesktopCommanderMCP) (MIT) — образец «пульта» для ИИ-чата: сессии процессов с частичным выводом, чтение файлов окнами, точная правка блоков, поиск сессиями, Run/Cancel прямо в чате. Набор `rdc` повторяет его имена и смысл.
+- [Model Context Protocol](https://modelcontextprotocol.io) и [официальный Go SDK](https://github.com/modelcontextprotocol/go-sdk) — протокол и транспорт сервера.
+- [Home Assistant](https://github.com/home-assistant/core) — дом под одним пультом; MCPshka управляет им как провайдером и хочет быть таким же «домашним центром», только для ИИ-агентов.
+- [Zuul: project gating](https://zuul-ci.org/docs/zuul/latest/gating.html) и merge queue — очередь вливания с упреждающими прогонами; основа распределённого CI на четырёх площадках.
+- [Temporal](https://github.com/temporalio/sdk-go) и [go-workflows](https://github.com/cschleiden/go-workflows) — долговечные процессы: работа как журналируемая задача, которую можно продолжить после сбоя.
+- [Litestream](https://github.com/benbjohnson/litestream) и [age](https://github.com/FiloSottile/age) — резервные копии SQLite и шифрование бэкапов.
+- [tusd](https://github.com/tus/tusd) — докачиваемая передача больших файлов вне ответа JSON-RPC.
+- [sony/gobreaker](https://github.com/sony/gobreaker) — предохранитель при недоступном брокере.
+- [OpenTelemetry Go](https://github.com/open-telemetry/opentelemetry-go) — словарь трассировки и метрик.
+- [OpenAI Codex CLI](https://github.com/openai/codex) — агент-исполнитель задач, которым MCPshka умеет управлять.
+- [freellmapi](https://github.com/tashfeenahmed/freellmapi) — шлюз бесплатных LLM-провайдеров, основа FreeLLM.
+- Инструменты [Uncle Bob](https://github.com/unclebob) ([crapper](https://github.com/unclebob/crapper), [mutator](https://github.com/unclebob/mutator), [dryer](https://github.com/unclebob/dryer)) — метрики сложности, мутационное тестирование и поиск дублей для самопроверки кода.
+
 ## Design goals
 
 - One small native Go binary.

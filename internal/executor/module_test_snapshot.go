@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"mcpshka/internal/distributedci"
+	"mcpshka/internal/failure"
 	"mcpshka/internal/gomodcache"
 	"mcpshka/internal/snapshotfiles"
 	"os"
@@ -41,6 +43,42 @@ const (
 var moduleCacheSource = ModuleCacheRoot
 
 var moduleTestCommand = []string{"go", "test", "-p", "1", "-count=1", "-timeout=45m", "./..."} // go's 10m default killed mcpserver on H96
+
+// The affected profile (ROADMAP S5.FAST.3) runs the integration gate over the
+// packages a merge touches. Root seals the list into the run environment;
+// the release receipt refuses it, a release always needs module:all.
+const moduleAffectedPackage = "module:affected"
+
+func moduleAffectedRun(s RunSpec) bool {
+	return s.Profile == ModuleTestProfile && distributedci.AffectedRun(s.Command, s.Env) && len(s.Runtime) == 0 && s.EnvBuild == nil
+}
+
+// moduleGateRun admits the two integration-gate forms of the module purpose.
+func moduleGateRun(m Manifest, s RunSpec) bool {
+	return s.Profile == ModuleTestProfile && m.Source != nil &&
+		(m.Source.Package == moduleTestPackage && moduleTestCommandMatches(s.Command) && len(s.Env) == 0 ||
+			m.Source.Package == moduleAffectedPackage && moduleAffectedRun(s))
+}
+
+// PrepareModuleGate seals the integration gate: the affected packages when
+// the merge allows it, otherwise the full module suite.
+func PrepareModuleGate(ctx context.Context, bootstrapID, repo, commit string) (Manifest, error) {
+	if pkgs := distributedci.AffectedOrFull(ctx, repo, commit); pkgs != nil {
+		return PrepareModuleTestAffected(ctx, bootstrapID, repo, commit, pkgs)
+	}
+	return PrepareModuleTest(ctx, bootstrapID, repo, commit)
+}
+
+// PrepareModuleTestAffected seals the integration gate over pkgs only.
+func PrepareModuleTestAffected(ctx context.Context, bootstrapID, repo, commit string, pkgs []string) (Manifest, error) {
+	list := strings.Join(pkgs, " ")
+	if !distributedci.ValidAffectedPackages(list) {
+		return Manifest{}, Hold(failure.PolicyDenied, "AFFECTED_PACKAGES_INVALID", "snapshot.PrepareModuleTestAffected", "affected package list invalid", nil)
+	}
+	return prepareSnapshotTest(ctx, bootstrapID, repo, commit, moduleAffectedPackage, ModuleTestPurpose, ModuleTestProfile, append([]string(nil), distributedci.AffectedCommand...), 0, func(s *RunSpec) {
+		s.Env = map[string]string{distributedci.AffectedEnv: list}
+	})
+}
 
 // PrepareModuleTest seals committed module inputs for the integration gate.
 // It never runs Go tooling on the source; the sandboxed worker does.

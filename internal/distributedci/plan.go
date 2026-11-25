@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -20,6 +21,32 @@ var ErrDispatchUnknown = errors.New("CI dispatch outcome unknown; reconcile rece
 var ErrEvidence = errors.New("untrusted distributed evidence rejected")
 
 var Sites = []string{"github", "gitverse", "moshub", "sourcecraft"}
+
+// ShardSuites names the release evidence suites: one shard per site.
+// ValidShardIndex accepts one canonical decimal index per distributed site;
+// H96 may run any shard as the fallback.
+func ValidShardIndex(s string) bool {
+	n, err := strconv.Atoi(s)
+	return err == nil && strconv.Itoa(n) == s && n >= 0 && n < len(Sites)
+}
+
+// PassedSuites is the receipt's suite map for a passed distributed run.
+func PassedSuites() map[string]string {
+	m := map[string]string{}
+	for _, s := range ShardSuites() {
+		m[s] = "success"
+	}
+	return m
+}
+
+func ShardSuites() []string {
+	s := make([]string, len(Sites))
+	for i := range Sites {
+		s[i] = "shard-" + strconv.Itoa(i)
+	}
+	return s
+}
+
 var shaRE = regexp.MustCompile("^[a-f0-9]{40}$")
 var pkgRE = regexp.MustCompile("^[A-Za-z0-9][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_.-]+)*$")
 

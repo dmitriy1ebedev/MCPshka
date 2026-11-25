@@ -21,6 +21,7 @@ import (
 	"mcpshka/internal/executor"
 	"mcpshka/internal/gitops"
 	"mcpshka/internal/jobs"
+	"mcpshka/internal/pipelineartifact"
 	"mcpshka/internal/projectprofile"
 	"mcpshka/internal/workbenchruntime"
 )
@@ -368,7 +369,7 @@ func exportPipelineArtifacts(ctx context.Context, state string, job jobs.Snapsho
 	base := filepath.Join(filepath.Dir(state), "pipeline")
 	var needed int64
 	for _, a := range m.Artifacts {
-		if a.Bytes < 0 || a.Bytes > executor.MaxPipelineArtifact {
+		if a.Bytes < 0 || a.Bytes > pipelineartifact.MaxArtifact {
 			return errors.New("invalid artifact size")
 		}
 		needed += a.Bytes
@@ -387,7 +388,7 @@ func exportPipelineArtifacts(ctx context.Context, state string, job jobs.Snapsho
 	var total int64
 	for i, a := range m.Artifacts {
 		total += a.Bytes
-		if a.Bytes < 0 || a.Bytes > executor.MaxPipelineArtifact || total > executor.MaxPipelineArtifacts {
+		if a.Bytes < 0 || a.Bytes > pipelineartifact.MaxArtifact || total > pipelineartifact.MaxTotal {
 			return errors.New("artifact byte budget exceeded")
 		}
 		if err = projectprofile.ValidateArtifacts([]string{a.Path}); err != nil {
@@ -506,7 +507,7 @@ func verifyPipelineManifest(m PipelineManifest) error {
 			return e
 		}
 		h := sha256.New()
-		n, e := io.Copy(h, io.LimitReader(f, executor.MaxPipelineArtifact+1))
+		n, e := io.Copy(h, io.LimitReader(f, pipelineartifact.MaxArtifact+1))
 		f.Close()
 		if e != nil || n != a.Bytes || hex.EncodeToString(h.Sum(nil)) != a.SHA256 {
 			return errors.New("retained artifact changed; evidence invalid")
@@ -549,7 +550,7 @@ func prunePipelineExports(state string) error {
 }
 
 func checkPipelineExportBudget(state, base string, needed int64) error {
-	if needed < 0 || needed > executor.MaxPipelineArtifacts {
+	if needed < 0 || needed > pipelineartifact.MaxTotal {
 		return errors.New("artifact budget exceeded")
 	}
 	var fs syscall.Statfs_t

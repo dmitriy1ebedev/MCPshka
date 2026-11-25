@@ -65,7 +65,7 @@ func (s RunSpec) validate() error {
 	if (s.Profile != "isolated-v1" && s.Profile != "project-test-v1" && s.Profile != "recipe-test-v1" && s.Profile != ModuleTestProfile && s.Profile != CIEvidenceProfile && s.Profile != LocalReleaseProfile) || s.WorkspaceDevice == 0 || s.WorkspaceInode == 0 || len(s.Command) < minArgs || len(s.Command) > 12 {
 		return Hold(failure.PolicyDenied, "RUN_SPEC_INVALID", "executor.RunSpec.validate", "run profile workspace identity or command length invalid", nil)
 	}
-	if (len(s.Runtime) > 0 || len(s.Env) > 0 || s.EnvBuild != nil) && (s.Profile != "recipe-test-v1" || !sandboxbind.ValidBinds(s.Runtime) || !sandboxbind.ValidEnv(s.Env) || !s.EnvBuild.Valid()) {
+	if (len(s.Runtime) > 0 || len(s.Env) > 0 || s.EnvBuild != nil) && !moduleAffectedRun(s) && (s.Profile != "recipe-test-v1" || !sandboxbind.ValidBinds(s.Runtime) || !sandboxbind.ValidEnv(s.Env) || !s.EnvBuild.Valid()) {
 		return Hold(failure.PolicyDenied, "RUN_RUNTIME_INVALID", "executor.RunSpec.validate", "runtime bindings environment or build specification invalid", nil)
 	}
 	total := 0
@@ -97,7 +97,7 @@ func (s RunSpec) validate() error {
 		return Hold(failure.PolicyDenied, "RUN_RELEASE_COMMAND_INVALID", "executor.RunSpec.validate", "release command outside sealed boundary", nil)
 	}
 	if s.Profile == ModuleTestProfile {
-		if moduleTestCommandMatches(s.Command) || distributedShardCommandMatches(s.Command) {
+		if (moduleTestCommandMatches(s.Command) || distributedShardCommandMatches(s.Command)) && len(s.Env) == 0 || moduleAffectedRun(s) {
 			return nil
 		}
 		return Hold(failure.PolicyDenied, "RUN_MODULE_COMMAND_INVALID", "executor.RunSpec.validate", "module command outside sealed boundary", nil)
@@ -157,7 +157,7 @@ func readManifest(id string) (Manifest, error) {
 	if m.Purpose == DistributedShardPurpose && !shardPackageValid(m.Source.Package) {
 		return Manifest{}, ErrHold
 	}
-	if m.Purpose == ModuleTestPurpose && m.Source.Package != moduleTestPackage {
+	if m.Purpose == ModuleTestPurpose && m.Source.Package != moduleTestPackage && m.Source.Package != moduleAffectedPackage {
 		return Manifest{}, Hold(failure.FencedUnknown, "MANIFEST_MODULE_PACKAGE_INVALID", "executor.readManifest", "manifest module package invalid", nil)
 	}
 	if m.Purpose == CIEvidencePurpose && !ciEvidencePackageValid(m.Source.Package) {
@@ -179,7 +179,7 @@ func readManifest(id string) (Manifest, error) {
 		if m.Purpose == "project-test-v1" && (s.Profile != "project-test-v1" || strings.Join(s.Command, " ") != "go test -p 1 ./"+m.Source.Package) {
 			return Manifest{}, Hold(failure.FencedUnknown, "MANIFEST_TEST_RUN_INVALID", "executor.readManifest", "test run does not match sealed source", nil)
 		}
-		if m.Purpose == ModuleTestPurpose && (s.Profile != ModuleTestProfile || !moduleTestCommandMatches(s.Command)) {
+		if m.Purpose == ModuleTestPurpose && !moduleGateRun(m, s) {
 			return Manifest{}, Hold(failure.FencedUnknown, "MANIFEST_MODULE_RUN_INVALID", "executor.readManifest", "module run does not match sealed purpose", nil)
 		}
 		if m.Purpose == CIEvidencePurpose && (s.Profile != CIEvidenceProfile || !ciEvidenceCommandMatches(s.Command)) {

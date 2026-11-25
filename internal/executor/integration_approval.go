@@ -306,7 +306,7 @@ func integrationTestRun(m Manifest, spec RunSpec) bool {
 		return false
 	}
 	if m.Purpose == ModuleTestPurpose {
-		return spec.Profile == ModuleTestProfile && m.Source.Package == moduleTestPackage && moduleTestCommandMatches(spec.Command)
+		return moduleGateRun(m, spec)
 	}
 	if m.Purpose == CIEvidencePurpose {
 		return spec.Profile == CIEvidenceProfile && ciEvidencePackageValid(m.Source.Package) && ciEvidenceCommandMatches(spec.Command)

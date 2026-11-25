@@ -12,7 +12,9 @@ func (c *Client) gitverseRunnerHealth(ctx context.Context) error {
 		Runs         []ciRun `json:"runs"`
 		WorkflowRuns []ciRun `json:"workflow_runs"`
 	}
-	if err := c.ciJSON(ctx, "GET", c.ciRoute()+"/actions/runs?per_page=10", nil, &report); err != nil {
+	// A sample of the newest runs: the list always has more pages once the
+	// repository has run CI ten times, which the evidence reader rejects.
+	if err := c.ciFirstPage(ctx, c.ciRoute()+"/actions/runs?per_page=10", &report); err != nil {
 		return err
 	}
 	runs := report.Runs

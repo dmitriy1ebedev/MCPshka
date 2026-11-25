@@ -15,6 +15,7 @@ import (
 
 	"mcpshka/internal/brokerclient"
 	"mcpshka/internal/cievidence"
+	"mcpshka/internal/distributedci"
 )
 
 const LocalSchema = "mcpshka.operator-verified-local/v1"
@@ -57,7 +58,7 @@ func ParseLocalReceipt(raw []byte) (LocalReceipt, error) {
 	switch ev.Kind {
 	case "module":
 	case "distributed":
-		suites = []string{"shard-0", "shard-1", "shard-2"}
+		suites = distributedci.ShardSuites()
 	case "gitverse":
 		suites = []string{"release-suite", "snapshot-contracts"}
 	case "github":

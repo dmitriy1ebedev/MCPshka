@@ -213,7 +213,7 @@ func RunIntegrationAdminWorker(args []string) ([]byte, error) {
 			return nil, executor.Hold(failure.PolicyDenied, "MODULE_PREPARE_INPUT_INVALID", "rootbroker.RunIntegrationAdminWorker", "module preparation arguments invalid", nil)
 		}
 		bootstrap := distributedgate.ModuleTestBootstrap(args[1], args[2], args[3])
-		prepare := executor.PrepareModuleTest
+		prepare := executor.PrepareModuleGate
 		if args[0] == "release-build-prepare" {
 			prepare = executor.PrepareLocalRelease
 			bootstrap = distributedgate.LocalReleaseBootstrap(args[1], args[2], args[3])
