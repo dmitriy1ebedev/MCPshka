@@ -1,0 +1,60 @@
+name: MCPshka administrative recovery acceptance
+on:
+  pull_request:
+    branches: [main]
+    # Draft PRs (WIP, Codex) do not spend Actions minutes; mark ready to gate.
+    types: [opened, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  admin-recovery:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    env:
+      GOMAXPROCS: "2"
+      GOMEMLIMIT: 512MiB
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Pin source and build the reviewed worker and root fixture
+        run: |
+          set -eu
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test -z "$(git status --porcelain)"
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends sqlite3 libsqlite3-dev pkg-config
+          mkdir -p "$RUNNER_TEMP/admin-recovery"
+          git rev-parse HEAD > "$RUNNER_TEMP/admin-recovery/source-sha.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/admin-recovery/source-tree.txt"
+          go build -p 1 -o "$RUNNER_TEMP/admin-recovery/broker" ./cmd/mcpshka-broker
+          go test -p 1 -c -o "$RUNNER_TEMP/admin-recovery/rootbroker.test" ./internal/rootbroker
+          go test -p 1 -c -o "$RUNNER_TEMP/admin-recovery/projectlease.test" ./internal/projectlease
+          test ! -e /usr/local/libexec/mcpshka-broker
+          sudo install -D -o root -g root -m 0755 "$RUNNER_TEMP/admin-recovery/broker" /usr/local/libexec/mcpshka-broker
+      - name: Exercise real PID1 administrative recovery and sealed CAS regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 180s sudo env -i PATH=/usr/bin:/bin GITHUB_ACTIONS=true MCPSHKA_LEASE_RECOVERY_E2E=1 "$RUNNER_TEMP/admin-recovery/rootbroker.test" -test.v -test.run '^TestLegacyLeaseWorkerSystemdE2E$' -test.timeout=160s 2>&1 | tee "$RUNNER_TEMP/admin-recovery/e2e.log"
+          timeout 120s sudo env -i PATH=/usr/bin:/bin "$RUNNER_TEMP/admin-recovery/projectlease.test" -test.v -test.run '^TestRootSealed' -test.timeout=100s 2>&1 | tee "$RUNNER_TEMP/admin-recovery/sealed-cas.log"
+          grep -q -- '--- PASS: TestLegacyLeaseWorkerSystemdE2E' "$RUNNER_TEMP/admin-recovery/e2e.log"
+          ! grep -q -- '--- SKIP:' "$RUNNER_TEMP/admin-recovery/e2e.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mcpshka-admin-recovery-results
+          path: |
+            ${{ runner.temp }}/admin-recovery/source-*.txt
+            ${{ runner.temp }}/admin-recovery/*.log
+          retention-days: 3
+          if-no-files-found: error

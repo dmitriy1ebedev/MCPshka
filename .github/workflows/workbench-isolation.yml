@@ -1,0 +1,109 @@
+name: MCPshka real Workbench isolation
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [main]
+    # Draft PRs (WIP, Codex) do not spend Actions minutes; mark ready to gate.
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact reviewed commit to test
+        required: true
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-workbench:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    env:
+      GOMAXPROCS: "2"
+      GOMEMLIMIT: 512MiB
+      EXPECTED_SHA: ${{ inputs.expected_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Pin source and require an unprivileged runner
+        run: |
+          set -eu
+          test "$(id -u)" != 0
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain)"
+          mkdir -p "$RUNNER_TEMP/mcpshka-isolation-results"
+          git rev-parse HEAD > "$RUNNER_TEMP/mcpshka-isolation-results/source-sha.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/mcpshka-isolation-results/source-tree.txt"
+          python3 packaging/cloud/source_digest.py --repo . > "$RUNNER_TEMP/mcpshka-isolation-results/source-identity.json"
+          go version > "$RUNNER_TEMP/mcpshka-isolation-results/toolchain.txt"
+      - name: Build pinned non-setuid bubblewrap in runner temp
+        run: |
+          set -eu
+          timeout 180s sudo apt-get update -qq
+          timeout 180s sudo apt-get install -y --no-install-recommends meson ninja-build libcap-dev pkg-config make nodejs npm
+          dep="$RUNNER_TEMP/mcpshka-isolation-dependency"
+          mkdir -p "$dep"
+          curl --fail --location --max-time 60 --max-filesize 4194304 --output "$dep/source.tar.gz" https://codeload.github.com/containers/bubblewrap/tar.gz/2a76602a8c71f36c1527cf9fc3417d9149822e0c
+          echo "d1383cdc691a335f531564c6d0a1e06165932a4bb9e62a42f952eb0286995431  $dep/source.tar.gz" | sha256sum -c -
+          tar -xzf "$dep/source.tar.gz" -C "$dep" --strip-components=1
+          rm "$dep/source.tar.gz"
+          meson setup "$dep/build" "$dep" -Dtests=false -Dman=disabled -Dselinux=disabled -Dbash_completion=disabled -Dzsh_completion=disabled
+          timeout 60s meson compile -C "$dep/build" -j 2
+          "$dep/build/bwrap" --version > "$RUNNER_TEMP/mcpshka-isolation-results/bubblewrap-version.txt"
+          sha256sum "$dep/build/bwrap" > "$RUNNER_TEMP/mcpshka-isolation-results/bubblewrap-sha256.txt"
+      - name: Place the pinned Go toolchain inside the existing usr mount
+        run: |
+          set -eu
+          toolchain="$(go env GOROOT)"
+          bytes="$(du -sb "$toolchain" | cut -f1)"
+          test "$bytes" -le 536870912
+          available="$(df -PB1 /usr/local | awk 'NR==2 {print $4}')"
+          test "$available" -ge "$((bytes + 3221225472))"
+          if test "$(readlink -f "$toolchain")" != /usr/local/go; then
+            test ! -e /usr/local/go
+            timeout 60s sudo cp -a "$toolchain" /usr/local/go
+          fi
+          test "$(/usr/local/go/bin/go version)" = "$(go version)"
+          /usr/local/go/bin/go version >> "$RUNNER_TEMP/mcpshka-isolation-results/toolchain.txt"
+      - name: Execute actual namespace and nested-code acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          # No sudo, sysctl changes, setuid helper or fallback to unconfined execution.
+          export MCPSHKA_SANDBOX_E2E=1
+          export MCPSHKA_SANDBOX_E2E_BWRAP="$RUNNER_TEMP/mcpshka-isolation-dependency/build/bwrap"
+          timeout 360s go test -p 1 -count=1 -json ./internal/executor -run '^TestWorkerSandboxIsolationE2E$' -timeout 300s 2>&1 | (ulimit -f 16384; tee "$RUNNER_TEMP/mcpshka-isolation-results/checks.jsonl")
+      - name: Require all real cases and fault controls to pass
+        run: |
+          python3 - <<'PYCASE'
+          import json, os
+          from pathlib import Path
+          log=Path(os.environ['RUNNER_TEMP'])/'mcpshka-isolation-results/checks.jsonl'
+          events=[json.loads(line) for line in log.read_text().splitlines() if line.startswith('{')]
+          name='TestWorkerSandboxIsolationE2E'
+          cases={name+'/isolated-v1/'+mode for mode in ('python','bash','make','npm')}
+          cases.add(name+'/project-test-v1/go-test')
+          cases|={name+'/fault/'+fault for fault in ('host_mount','host_network','host_proc')}
+          passed={e.get('Test') for e in events if e.get('Action')=='pass'}
+          assert cases|{name} <= passed, 'missing real acceptance cases: '+str(cases-passed)
+          assert not any(e.get('Action')=='skip' and e.get('Test','').startswith(name) for e in events), 'sandbox acceptance was skipped'
+          print(json.dumps({'schema':'mcpshka.workbench-isolation-results/v1','cases':len(cases),'state':'passed'}))
+          PYCASE
+      - name: Preserve bounded source-pinned evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpshka-workbench-isolation-results
+          path: ${{ runner.temp }}/mcpshka-isolation-results
+          retention-days: 3
+          if-no-files-found: error

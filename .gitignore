@@ -1,0 +1,17 @@
+bin/
+__pycache__/
+*.pyc
+AGENT.md
+AGENTS.md
+AGENTS.override.md
+ROADMAP.md
+.agents/
+error.log
+/roadmap/
+/.mcpshka/profile.json
+/docs/CODEX_INTEGRATE_ALL_*.md
+
+/CODEX_NOTES.md
+
+/.codex-perf-checkpoint.txt
+/internal/mcpserver/testdata/*.got

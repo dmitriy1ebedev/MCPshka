@@ -1,0 +1,30 @@
+http://:8798 {
+    bind 172.17.0.1
+    @allowed path /approval/* /passkey/enroll /passkey/enroll/* /connections /connections/* /runner/* /storage/connect/* /storage/callback /mcp /oauth/* /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/mcp /.well-known/oauth-authorization-server
+    handle @allowed {
+        reverse_proxy 127.0.0.1:8799 {
+            header_up Host pristavka.example.ts.net
+            header_up X-Forwarded-Proto https
+        }
+    }
+    handle {
+        respond "Not found" 404
+    }
+}
+
+# MCP-225: the Lane dnsmasq host-record points pristavka at this H96 LAN IP.
+# Preserve the original HTTPS hostname for the Face ID origin and callback.
+# This site must stay scoped to LAN; it is not a new Funnel/public listener.
+pristavka.example.ts.net {
+    bind 192.168.77.10
+    @allowed path /approval/* /passkey/enroll /passkey/enroll/* /connections /connections/* /runner/* /storage/connect/* /storage/callback /mcp /oauth/* /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/mcp /.well-known/oauth-authorization-server
+    handle @allowed {
+        reverse_proxy 127.0.0.1:8799 {
+            header_up Host pristavka.example.ts.net
+            header_up X-Forwarded-Proto https
+        }
+    }
+    handle {
+        respond "Not found" 404
+    }
+}

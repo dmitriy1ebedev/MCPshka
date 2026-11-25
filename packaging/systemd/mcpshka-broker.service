@@ -1,0 +1,48 @@
+[Unit]
+Description=MCPshka narrow privileged broker
+After=systemd-journald.service docker.service
+Wants=systemd-journald.service
+
+[Service]
+Type=simple
+User=root
+Group=mcpshka
+UMask=0007
+ExecStart=/usr/local/libexec/mcpshka-broker serve
+Restart=on-failure
+RestartSec=2s
+RuntimeDirectory=mcpshka-broker
+RuntimeDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+# /root stays hidden; only the root-born protected integration store is
+# visible, read-only, for integration status/launch/fence (workers get RW).
+ProtectHome=tmpfs
+BindReadOnlyPaths=-/root/repos/mcpshka-controlled
+ReadWritePaths=/var/lib/diag/traffic-runs /var/lib/mcpshka-executor /opt/homeassistant/config
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_PACKET
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_PTRACE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_PTRACE
+MemoryMax=128M
+TasksMax=96
+# The control plane outranks test matrices (executor units run CPUWeight=20,
+# Nice=19, idle IO). 50% quota starved recovery at load 9-12 on 4 cores
+# (DIAG ACTIVE-05, MCP-120); one core stays a hard ceiling.
+CPUQuota=100%
+CPUWeight=400
+IOWeight=400
+
+[Install]
+WantedBy=multi-user.target

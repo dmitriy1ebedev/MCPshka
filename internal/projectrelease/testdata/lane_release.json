@@ -1,0 +1,139 @@
+{
+  "schema": "mcpshka.release/v1",
+  "version_file": "VERSION",
+  "steps": [
+    {
+      "name": "stage",
+      "root": true,
+      "argv": [
+        "./lane",
+        "release",
+        "stage"
+      ],
+      "timeout_seconds": 900,
+      "expect": "(?m)^  \"ok\": true",
+      "capture": {
+        "release_id": "(?m)^  \"release_id\": \"(release-[0-9a-f]{12}-[0-9a-f]{12})\""
+      }
+    },
+    {
+      "name": "gate-start",
+      "root": true,
+      "argv": [
+        "./lane",
+        "release",
+        "gate-start",
+        "--release-id",
+        "{release_id}"
+      ],
+      "timeout_seconds": 1800,
+      "retry_seconds": 60,
+      "expect": "(?m)^  \"run_id\": \"release-",
+      "fail": "gate target must be|cannot resolve immutable gate target",
+      "capture": {
+        "gate_run": "(?m)^  \"run_id\": \"(release-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8})\""
+      }
+    },
+    {
+      "name": "gate",
+      "root": true,
+      "argv": [
+        "./lane",
+        "release",
+        "gate-status",
+        "--release-id",
+        "{release_id}",
+        "--run-id",
+        "{gate_run}"
+      ],
+      "timeout_seconds": 2400,
+      "retry_seconds": 30,
+      "expect": "(?m)^  \"status\": \"SUCCESS\"",
+      "fail": "(?m)^  \"status\": \"(ERROR|FAILED)\""
+    },
+    {
+      "name": "plan",
+      "root": true,
+      "argv": [
+        "./lane",
+        "upgrade",
+        "plan",
+        "--release-id",
+        "{release_id}"
+      ],
+      "timeout_seconds": 300,
+      "expect": "(?m)^  \"ok\": true"
+    },
+    {
+      "name": "upgrade",
+      "root": true,
+      "argv": [
+        "./lane",
+        "upgrade",
+        "start",
+        "--release-id",
+        "{release_id}"
+      ],
+      "timeout_seconds": 300,
+      "expect": "(?m)^  \"status\": \"RUNNING\"",
+      "capture": {
+        "upgrade_run": "(?m)^  \"run_id\": \"(upgrade-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8})\""
+      }
+    },
+    {
+      "name": "await",
+      "root": true,
+      "argv": [
+        "./lane",
+        "upgrade",
+        "run-status",
+        "--run-id",
+        "{upgrade_run}"
+      ],
+      "timeout_seconds": 1800,
+      "retry_seconds": 15,
+      "expect": "(?m)^  \"status\": \"(AWAITING_CONFIRM|SUCCESS)\"",
+      "fail": "(?m)^  \"status\": \"(ROLLED_BACK|ROLLBACK_FAILED|FAILED|ERROR)\""
+    },
+    {
+      "name": "route",
+      "root": true,
+      "argv": [
+        "/usr/sbin/ip",
+        "route",
+        "show",
+        "table",
+        "110"
+      ],
+      "timeout_seconds": 120,
+      "retry_seconds": 10,
+      "expect": "dev lanetun0"
+    },
+    {
+      "name": "tunnel",
+      "root": true,
+      "argv": [
+        "/usr/sbin/ip",
+        "-o",
+        "link",
+        "show",
+        "lanetun0"
+      ],
+      "timeout_seconds": 60,
+      "expect": "lanetun0"
+    },
+    {
+      "name": "confirm",
+      "root": true,
+      "argv": [
+        "./lane",
+        "upgrade",
+        "confirm",
+        "--run-id",
+        "{upgrade_run}"
+      ],
+      "timeout_seconds": 300,
+      "expect": "(?m)^  \"status\": \"COMMITTED\""
+    }
+  ]
+}

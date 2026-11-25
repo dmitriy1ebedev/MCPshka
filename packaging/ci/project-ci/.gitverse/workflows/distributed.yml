@@ -1,0 +1,46 @@
+name: Distributed project CI
+on:
+  workflow_dispatch:
+    inputs:
+      shard:
+        required: true
+        type: string
+      source_commit:
+        required: true
+        type: string
+      source_tree:
+        required: true
+        type: string
+      snapshot:
+        required: true
+        type: string
+      plan_hash:
+        required: true
+        type: string
+jobs:
+  shard:
+    name: distributed-shard-${{ inputs.shard }}
+    runs-on: ubuntu-latest
+    container: golang:1.26.0-trixie
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Shard and ARM64 artifacts
+        env:
+          CI_SHARD: ${{ inputs.shard }}
+          CI_SOURCE_COMMIT: ${{ inputs.source_commit }}
+          CI_SOURCE_TREE: ${{ inputs.source_tree }}
+          CI_SNAPSHOT: ${{ inputs.snapshot }}
+          CI_PLAN_HASH: ${{ inputs.plan_hash }}
+          CI_RUN_ID: ${{ gitverse.run_id }}
+        run: sh .ci/distributed.sh gitverse
+      - name: Upload build
+        if: always() && inputs.shard == '0'
+        uses: actions/upload-artifact@v3
+        with:
+          name: project-build
+          path: out/distributed/
+          if-no-files-found: ignore

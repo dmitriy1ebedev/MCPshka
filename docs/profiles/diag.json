@@ -1,0 +1,66 @@
+{
+  "schema": "mcpshka.project-profile/v1",
+  "name": "diag-pipeline",
+  "match": {
+    "module": "gitverse.ru/dmitriy_1ebedev/diag",
+    "markers": [
+      "go.mod",
+      "Makefile"
+    ]
+  },
+  "workflows": {
+    "prepare": {
+      "command": "go",
+      "args": [
+        "version"
+      ],
+      "timeout_seconds": 600,
+      "output_limit_bytes": 4194304
+    },
+    "build": {
+      "command": "make",
+      "args": [
+        "cross"
+      ],
+      "timeout_seconds": 1800,
+      "output_limit_bytes": 4194304
+    },
+    "test": {
+      "command": "make",
+      "args": [
+        "test"
+      ],
+      "timeout_seconds": 1800,
+      "output_limit_bytes": 4194304
+    },
+    "lint": {
+      "command": "make",
+      "args": [
+        "vet"
+      ],
+      "timeout_seconds": 1800,
+      "output_limit_bytes": 4194304
+    },
+    "package": {
+      "command": "make",
+      "args": [
+        "cross"
+      ],
+      "timeout_seconds": 1800,
+      "output_limit_bytes": 4194304,
+      "artifacts": [
+        "build/diag-linux-arm64",
+        "build/diag-linux-amd64"
+      ]
+    },
+    "verify": {
+      "command": "make",
+      "args": [
+        "package-smoke-native",
+        "package-smoke-native-matrix"
+      ],
+      "timeout_seconds": 1800,
+      "output_limit_bytes": 4194304
+    }
+  }
+}

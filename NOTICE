@@ -1,0 +1,8 @@
+MCPshka
+Copyright 2026 MCPshka contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+The name "MCPshka" and its logo are not licensed under it (section 6).
+
+Third-party Go modules keep their own licenses (MIT, BSD-3-Clause,
+Apache-2.0); see go.mod and each module's LICENSE file.

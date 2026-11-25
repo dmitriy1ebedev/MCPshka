@@ -1,0 +1,61 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Проблемы MCPshka</title>
+<style>
+:root{color-scheme:light dark;--bg:#f6f7f9;--card:#fff;--ink:#16181d;--mute:#5d6470;--line:#dde1e7;--ok:#137a3a;--bad:#b42318;--warn:#9a6700;--acc:#2457d6}
+@media (prefers-color-scheme:dark){:root{--bg:#111318;--card:#1a1d24;--ink:#e8eaee;--mute:#9aa1ad;--line:#2c313b;--ok:#4cc27a;--bad:#ff7b6e;--warn:#e0b341;--acc:#7aa2ff}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 -apple-system,system-ui,Segoe UI,Roboto,sans-serif}
+main{max-width:860px;margin:0 auto;padding:16px}h1{font-size:22px;margin:4px 0 2px}.sub{color:var(--mute);margin:0 0 12px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px}select,input,textarea{padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit;min-width:0}
+input#q{flex:1 1 200px}textarea{width:100%;min-height:70px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}.chip{font-size:13px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--ink);min-height:0}
+.chip.on{border-color:var(--acc);color:var(--acc);font-weight:600}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin:0 0 8px;cursor:pointer}
+.row{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}.id{font:600 13px ui-monospace,Menlo,monospace;color:var(--mute)}.t{font-weight:600;flex:1 1 300px;overflow-wrap:anywhere}
+.p{font-size:12px;font-weight:700;padding:1px 7px;border-radius:6px;color:#fff}.P0{background:var(--bad)}.P1{background:var(--warn)}.P2{background:var(--acc)}.P3{background:var(--mute)}
+.st{font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px;border:1px solid currentColor;white-space:nowrap}
+.open{color:var(--bad)}.in_progress{color:var(--warn)}.fixed{color:var(--acc)}.closed{color:var(--ok)}.rejected{color:var(--mute)}
+.meta{color:var(--mute);font-size:13px;margin-top:4px;overflow-wrap:anywhere}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.45 ui-monospace,Menlo,monospace;background:var(--bg);border-radius:8px;padding:10px;max-height:60vh;overflow:auto}
+.acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}button{padding:9px 14px;border:0;border-radius:8px;background:var(--acc);color:#fff;font:inherit;font-weight:600;min-height:40px}
+button.sec{background:transparent;color:var(--acc);border:1px solid var(--acc)}button.warn{background:var(--ok)}a{color:var(--acc)}#msg{min-height:1.4em;color:var(--mute);overflow-wrap:anywhere}
+.hist{font-size:13px;color:var(--mute);margin:8px 0 0;padding-left:18px}
+@media (max-width:560px){.acts{flex-direction:column}.acts button{width:100%}}
+</style></head><body><main>
+<h1>Проблемы</h1><p class="sub">Карточки MCP-NNN: приоритет, статус, коммит и выпуск. Закрытие — только приёмкой. <a href="/connections">Подключения</a></p>
+<div class="bar"><input id="q" placeholder="поиск по словам"><select id="pr"><option value="">все приоритеты</option><option>P0</option><option>P1</option><option>P2</option><option>P3</option></select></div>
+<div class="chips" id="chips"></div><div id="msg"></div><div id="list"></div><div id="one" hidden></div>
+</main><script>
+const S=[["active","в работе и открытые"],["open","открытые"],["in_progress","в работе"],["fixed","исправлены"],["closed","закрыты"],["rejected","отклонены"],["","все"]];
+const RU={open:"открыта",in_progress:"в работе",fixed:"исправлена",closed:"закрыта",rejected:"отклонена"};
+let st="active",counts={};const $=id=>document.getElementById(id);
+function el(t,c,x){const e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e}
+function msg(t){$("msg").textContent=t||""}
+async function api(path,body){const r=await fetch("/connections/api/issues"+path,body?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}:{});
+ const j=await r.json().catch(()=>({error:"ответ не JSON"}));if(r.status===401){msg("");$("list").replaceChildren(login());throw new Error("login")}if(!r.ok)throw new Error(j.error||r.status);return j}
+function login(){const d=el("div","card");d.append(el("div","t","Нужен вход через Face ID"),el("div","meta","Войдите на странице «Подключения» и вернитесь сюда."));const a=el("a",null,"Открыть «Подключения»");a.href="/connections";d.append(a);return d}
+function chips(){const c=$("chips");c.replaceChildren();for(const[k,t]of S){let n=k==="active"?(counts.open||0)+(counts.in_progress||0)+(counts.fixed||0):k===""?Object.keys(counts).filter(x=>!x.startsWith("P:")).reduce((a,x)=>a+counts[x],0):(counts[k]||0);
+ const b=el("button","chip"+(st===k?" on":""),t+" · "+n);b.onclick=()=>{st=k;load()};c.append(b)}}
+async function load(){$("one").hidden=true;$("list").hidden=false;const q=new URLSearchParams({status:st,priority:$("pr").value,text:$("q").value.trim()});
+ try{const j=await api("?"+q);counts=j.counts||{};chips();const l=$("list");l.replaceChildren();if(!(j.issues||[]).length)l.append(el("div","meta","Нет карточек."));
+ for(const i of j.issues||[]){const d=el("div","card"),r=el("div","row");r.append(el("span","id",i.id),el("span","p "+i.priority,i.priority),el("span","t",i.title),el("span","st "+i.status,RU[i.status]||i.status));d.append(r);
+  const m=[i.category,i.project,i.commit&&("коммит "+i.commit.slice(0,10)),i.release&&("выпуск "+i.release),i.agent_task&&("агент "+i.agent_task),i.dispatch&&("ждёт запуска: "+i.dispatch)].filter(Boolean).join(" · ");if(m)d.append(el("div","meta",m));
+  d.onclick=()=>open(i.id);l.append(d)}}catch(e){if(e.message!=="login")msg(e.message)}}
+async function act(id,a,body){msg("…");try{await api("/"+id+"/"+a,body);msg("готово");open(id)}catch(e){if(e.message!=="login")msg(e.message)}}
+async function open(id){let j;try{j=await api("/"+encodeURIComponent(id))}catch(e){if(e.message!=="login")msg(e.message);return}
+ const i=j.issue,o=$("one");$("list").hidden=true;o.hidden=false;o.replaceChildren();const back=el("button","sec","← к списку");back.onclick=()=>{msg("");load()};o.append(back);
+ const c=el("div","card");c.style.cursor="auto";const r=el("div","row");r.append(el("span","id",i.id),el("span","p "+i.priority,i.priority),el("span","t",i.title),el("span","st "+i.status,RU[i.status]||i.status));c.append(r);
+ const m=[i.category,i.project,i.status_note&&("в реестре: "+i.status_note),i.commit&&("коммит "+i.commit),i.release&&("выпуск "+i.release),i.agent_task&&("агент "+i.agent_task),i.acceptance&&("принято: "+i.acceptance.evidence+" "+(i.acceptance.note||"")),i.lesson&&("урок в БЗ: "+i.lesson)].filter(Boolean);
+ for(const x of m)c.append(el("div","meta",x));c.append(el("pre",null,i.body));
+ if((j.similar||[]).length){c.append(el("div","meta","Похожие:"));for(const s of j.similar){const a=el("a",null,s.id+" · "+(RU[s.status]||s.status)+" · "+s.title);a.href="#";a.style.display="block";a.onclick=e=>{e.preventDefault();open(s.id)};c.append(a)}}
+ const note=el("textarea");note.placeholder="заметка: что проверено, причина отклонения, новые факты";c.append(note);const A=el("div","acts");
+ const btn=(t,cls,f)=>{const b=el("button",cls,t);b.onclick=f;A.append(b)};
+ if(i.status!=="closed"&&i.status!=="rejected"){const ag=el("select");for(const x of["codex","claude"]){const op=el("option",null,x);ag.append(op)}A.append(ag);btn("В работу",null,()=>act(i.id,"dispatch",{agent:ag.value}))}
+ if(i.status==="fixed")btn("Принять",'warn',()=>act(i.id,"accept",{note:note.value}));
+ if(i.status!=="closed"&&i.status!=="rejected")btn("Отклонить","sec",()=>act(i.id,"update",{status:"rejected",note:note.value}));
+ if(i.status==="closed"||i.status==="rejected"||i.status==="fixed")btn("Открыть снова","sec",()=>act(i.id,"update",{status:"open",note:note.value}));
+ for(const p of["P0","P1","P2","P3"])if(p!==i.priority)btn(p,"sec",()=>act(i.id,"update",{priority:p,note:note.value}));
+ btn("Добавить заметку","sec",()=>act(i.id,"update",{append:note.value}));c.append(A);
+ if((i.history||[]).length){const h=el("ol","hist");for(const e of i.history.slice(-12))h.append(el("li",null,new Date(e.at).toLocaleString("ru-RU")+" · "+e.actor+" · "+e.action+(e.note?" · "+e.note:"")));c.append(h)}
+ o.append(c);scrollTo(0,0)}
+let t;$("q").oninput=()=>{clearTimeout(t);t=setTimeout(load,300)};$("pr").onchange=load;load();
+</script></body></html>

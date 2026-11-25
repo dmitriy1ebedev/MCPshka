@@ -1,0 +1,32 @@
+# Open core CI (overlay from packaging/opencore/public): every push to the
+# public main runs vet and the full Go suite as an unprivileged user. Docker
+# Hub is unreachable from SourceCraft workers: the Yandex mirror image fetches
+# the pinned Go toolchain through GOTOOLCHAIN.
+on:
+  push:
+    - workflows: [test]
+      filter:
+        branches: ["main"]
+
+workflows:
+  test:
+    settings:
+      max_cube_duration: 50m
+    tasks:
+      - go-test
+
+tasks:
+  - name: go-test
+    cubes:
+      - name: test
+        image: cr.yandex/mirror/golang:1.23.5-bullseye
+        env:
+          GOTOOLCHAIN: go1.26.0
+        script:
+          - apt-get update -qq && apt-get install -y --no-install-recommends tini sqlite3 || true
+          - |
+            id ci >/dev/null 2>&1 || useradd --create-home --uid 10001 ci
+            chown -R ci:ci .
+            gobin="$(dirname "$(command -v go)")"
+            runuser -u ci -- env -i PATH="$gobin:/usr/bin:/bin" HOME=/home/ci LANG=C GOTOOLCHAIN="${GOTOOLCHAIN:-auto}" GOFLAGS=-mod=readonly go vet ./...
+            runuser -u ci -- env -i PATH="$gobin:/usr/bin:/bin" HOME=/home/ci LANG=C GOTOOLCHAIN="${GOTOOLCHAIN:-auto}" GOFLAGS=-mod=readonly go test -p 2 -count=1 ./...

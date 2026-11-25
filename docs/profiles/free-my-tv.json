@@ -1,0 +1,65 @@
+{
+  "schema": "mcpshka.project-profile/v1",
+  "name": "free-my-tv-pipeline",
+  "match": {
+    "markers": [
+      "Makefile"
+    ]
+  },
+  "workflows": {
+    "prepare": {
+      "command": "python3",
+      "args": [
+        "-c",
+        "from pathlib import Path; assert Path('webos/build.py').is_file(); assert Path('webos/build_overlay.py').is_file()"
+      ],
+      "timeout_seconds": 600,
+      "output_limit_bytes": 4194304
+    },
+    "build": {
+      "command": "make",
+      "args": [
+        "build"
+      ],
+      "timeout_seconds": 600,
+      "output_limit_bytes": 4194304
+    },
+    "test": {
+      "command": "make",
+      "args": [
+        "test"
+      ],
+      "timeout_seconds": 600,
+      "output_limit_bytes": 4194304
+    },
+    "lint": {
+      "command": "node",
+      "args": [
+        "--check",
+        "web/cameras.js"
+      ],
+      "timeout_seconds": 600,
+      "output_limit_bytes": 4194304
+    },
+    "package": {
+      "command": "make",
+      "args": [
+        "build"
+      ],
+      "timeout_seconds": 600,
+      "output_limit_bytes": 4194304,
+      "artifacts": [
+        "FreeMyTV-webos.ipk",
+        "FreeMyTV-overlay-webos.ipk"
+      ]
+    },
+    "verify": {
+      "command": "make",
+      "args": [
+        "verify"
+      ],
+      "timeout_seconds": 600,
+      "output_limit_bytes": 4194304
+    }
+  }
+}

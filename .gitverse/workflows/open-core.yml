@@ -1,0 +1,31 @@
+# Open core CI (overlay from packaging/opencore/public): every push to the
+# public main runs vet and the full Go suite as an unprivileged user.
+name: Open core CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Git 2.44+ and tini
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends software-properties-common tini
+          timeout 120 add-apt-repository -y ppa:git-core/ppa || echo "::warning::git-core PPA unreachable"
+          apt-get update -qq && apt-get install -y --no-install-recommends git
+      - name: Go vet and tests (unprivileged)
+        run: |
+          id ci >/dev/null 2>&1 || useradd --create-home --uid 10001 ci
+          chown -R ci:ci .
+          gobin="$(dirname "$(command -v go)")"
+          runuser -u ci -- env -i PATH="$gobin:/usr/bin:/bin" HOME=/home/ci LANG=C GOTOOLCHAIN="${GOTOOLCHAIN:-auto}" GOFLAGS=-mod=readonly go vet ./...
+          runuser -u ci -- env -i PATH="$gobin:/usr/bin:/bin" HOME=/home/ci LANG=C GOTOOLCHAIN="${GOTOOLCHAIN:-auto}" GOFLAGS=-mod=readonly /usr/bin/tini -s -g -- go test -p 2 -count=1 ./...

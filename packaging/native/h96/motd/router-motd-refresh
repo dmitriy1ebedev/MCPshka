@@ -1,0 +1,70 @@
+#!/bin/bash
+# router-motd-refresh (MCP-173) — собирает сводку H96 в фоне и кладёт снимок,
+# который router-motd-login печатает при входе по SSH.
+# Подробная исходная сводка проходит очистку, затем compact AWK формирует
+# шесть мобильных строк шириной <=48 видимых колонок и объемом <=1000 байт.
+# ANSI SGR цвета задаются только рендерером, не приходят из входных данных.
+# Сбор ограничен по времени; не уложился или упал — в снимке одна строка об этом.
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+DASH=${ROUTER_MOTD_DASHBOARD:-/usr/local/libexec/router-dashboard}
+SNAP=${ROUTER_MOTD_SNAPSHOT:-/run/router-motd/snapshot}
+RENDER=${ROUTER_MOTD_RENDER:-/usr/local/libexec/router-motd-compact.awk}
+LIMIT=${ROUTER_MOTD_TIMEOUT:-15}
+dir=${SNAP%/*}
+mkdir -p "$dir" 2>/dev/null || exit 0
+exec 9>"$dir/.lock" || exit 0
+flock -n 9 || exit 0   # сбор уже идёт
+[[ $1 != --force && -n $(find "$SNAP" -newermt '-30 seconds' 2>/dev/null) ]] && exit 0
+
+sanitize() {
+  LC_ALL=C sed -E \
+      -e 's#\x1b\[[0-9;?]*[ -/]*[@-~]##g' \
+      -e 's#\x1b\][^\x07\x1b]*(\x07|\x1b\\)?##g' \
+      -e 's#\x1b.?##g' \
+      -e 's#✓#ok#g; s#✗#СБОЙ#g; s#⚠#!#g; s#│#|#g; s#→#->#g; s#·#-#g; s#—#-#g; s#…#..#g' \
+    | LC_ALL=C tr '\t' ' ' | LC_ALL=C tr -d '\000-\011\013-\037\177' \
+    | LC_ALL=C sed -E 's#(\xd0[\x80-\xbf]|\xd1[\x80-\xbf])|[\x80-\xff]#\1#g' \
+    | LC_ALL=C cut -b1-180 \
+    | iconv -f UTF-8 -t UTF-8 -c 2>/dev/null \
+    | LC_ALL=C awk 'NF { if (++l > 32) exit; n += length($0) + 1; if (n > 4096) exit; print }'
+}
+
+raw=$(mktemp "$dir/.raw.XXXXXX") || exit 0
+clean=$(mktemp "$dir/.clean.XXXXXX") || exit 0
+tmp=$(mktemp "$dir/.snap.XXXXXX") || exit 0
+plain=$(mktemp "$dir/.plain.XXXXXX") || exit 0
+trap 'rm -f "$raw" "$clean" "$tmp" "$plain"' EXIT
+( ulimit -f 128; exec timeout -k 2 "$LIMIT" nice -n 19 "$DASH" ) </dev/null >"$raw" 2>/dev/null
+rc=$?
+if (( rc == 0 )) && [[ -s $raw && -r $RENDER ]]; then
+  sanitize <"$raw" >"$clean"
+  sp=${ROUTER_MOTD_SWAP_PCT:-}
+  if [[ ! $sp =~ ^[0-9]+$ ]]; then
+    sp=$(LC_ALL=C awk '/^SwapTotal:/{t=$2}/^SwapFree:/{f=$2}END{if(t>0)printf "%d",(t-f)*100/t;else print 0}' /proc/meminfo 2>/dev/null)
+  fi
+  {
+    printf '\n'
+    LC_ALL=C awk -v color=1 -v swap_pct="$sp" -f "$RENDER" "$clean"
+    printf '\n'
+  } >"$tmp"
+  {
+    printf '\n'
+    LC_ALL=C awk -v color=0 -v swap_pct="$sp" -f "$RENDER" "$clean"
+    printf '\n'
+  } >"$plain"
+elif [[ -s $SNAP && -n $(find "$SNAP" -newermt "-${ROUTER_MOTD_STALE_MIN:-20} minutes" 2>/dev/null) ]] \
+    && ! grep -q 'data unavailable' "$SNAP" 2>/dev/null; then
+  exit 0   # перегруз/таймаут: оставить последний хороший снимок, пока он свежий
+else
+  printf '\nH96  data unavailable\nFIX  check collector (code %s)\nmore: motd\n\n' "$rc" >"$tmp"
+  cp "$tmp" "$plain"
+fi
+# Strict byte cap prevents a bad collector/parser from flooding an SSH client.
+if (( $(wc -c <"$tmp") > 1000 || $(wc -c <"$plain") > 1000 )); then
+  printf '\nH96  data unavailable\nFIX  check collector\nmore: motd\n\n' >"$tmp"
+  cp "$tmp" "$plain"
+fi
+chmod 644 "$tmp" "$plain" || exit 0
+mv -f "$plain" "${SNAP}.plain" || exit 0
+mv -f "$tmp" "$SNAP"
+exit 0

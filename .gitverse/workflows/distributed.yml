@@ -1,0 +1,46 @@
+name: MCPshka distributed CI
+on:
+  workflow_dispatch:
+    inputs:
+      shard:
+        description: Shard index
+        required: true
+      source_commit:
+        description: Source commit
+        required: true
+      source_tree:
+        description: Exact source tree
+        required: true
+      snapshot:
+        description: Parentless snapshot SHA
+        required: true
+      plan_hash:
+        description: Deterministic package plan digest
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: distributed-${{ gitverse.ref }}-${{ inputs.shard }}
+  cancel-in-progress: false
+jobs:
+  shard:
+    name: distributed-shard-${{ inputs.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      CI_SHARD: ${{ inputs.shard }}
+      CI_SOURCE_COMMIT: ${{ inputs.source_commit }}
+      CI_SOURCE_TREE: ${{ inputs.source_tree }}
+      CI_SNAPSHOT: ${{ inputs.snapshot }}
+      CI_PLAN_HASH: ${{ inputs.plan_hash }}
+      CI_RUN_ID: ${{ gitverse.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Vet and test only the assigned packages
+        run: sh packaging/ci/distributed_shard.sh gitverse

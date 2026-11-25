@@ -1,0 +1,30 @@
+on:
+  push:
+    - workflows: [distributed]
+      filter:
+        branches: ["mcpshka-distributed/**/shard-*"]
+workflows:
+  distributed:
+    settings:
+      max_cube_duration: 50m
+    tasks: [distributed-shard]
+tasks:
+  - name: distributed-shard
+    cubes:
+      - name: identity
+        image: cr.yandex/mirror/golang:1.23.5-bullseye
+        env:
+          GOTOOLCHAIN: go1.26.0
+        script:
+          - sh .ci/distributed.sh sourcecraft-start
+        artifacts:
+          paths: [report.json]
+      - name: shard
+        needs: [identity]
+        image: cr.yandex/mirror/golang:1.23.5-bullseye
+        env:
+          GOTOOLCHAIN: go1.26.0
+        script:
+          - sh .ci/distributed.sh sourcecraft
+        artifacts:
+          paths: [report.json, out/distributed/]
