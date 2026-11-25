@@ -24,7 +24,7 @@ func SafeModulePath(name, depsDir string) bool {
 // ModuleDoc allows exactly the tracked files read by the spelling gate.
 func ModuleDoc(name string) bool {
 	switch name {
-	case "README.md", "CHANGELOG.md", "BUGLOG.md":
+	case "README.md", "README.ru.md", "CHANGELOG.md", "BUGLOG.md":
 		return true
 	}
 	if !strings.HasPrefix(name, "docs/") || !strings.HasSuffix(name, ".md") {

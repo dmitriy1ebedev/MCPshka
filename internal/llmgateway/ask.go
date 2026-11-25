@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -100,7 +101,7 @@ func (g *Gateway) run(ctx context.Context, purpose, system, user string, opts Op
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(c.BudgetSeconds)*time.Second)
 	defer cancel()
 	answered := map[string]bool{}
-	for i, ep := range c.endpoints() {
+	for i, ep := range preferEndpoint(c.endpoints(), opts.Model) {
 		if opts.TimeoutSeconds > 0 {
 			ep.TimeoutSeconds = opts.TimeoutSeconds
 		}
@@ -121,6 +122,21 @@ func (g *Gateway) run(ctx context.Context, purpose, system, user string, opts Op
 	}
 	out.Complete = len(out.Replies) == n
 	return out, nil
+}
+
+// preferEndpoint puts the endpoint that owns an explicitly requested model
+// first: 25.11 llm.ask(model GigaChat-2-Max) spent its whole budget walking
+// the FreeLLM chain and never reached the GigaChat fallback.
+func preferEndpoint(eps []Config, model string) []Config {
+	if model == "" {
+		return eps
+	}
+	owns := func(c Config) bool {
+		return c.Model == model || c.Dialect == "gigachat" && strings.HasPrefix(strings.ToLower(model), "gigachat")
+	}
+	out := append([]Config(nil), eps...)
+	sort.SliceStable(out, func(i, j int) bool { return owns(out[i]) && !owns(out[j]) })
+	return out
 }
 
 // runEndpoint asks one endpoint's models in preference order until n

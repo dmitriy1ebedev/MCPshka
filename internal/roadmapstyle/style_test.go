@@ -32,7 +32,7 @@ func TestTemplatePassesAndDeviationsAreNamed(t *testing.T) {
 // own documents (ROADMAPs are local and graded by project_context/phase_gate).
 func TestTrackedDocsSpelling(t *testing.T) {
 	root := filepath.Join("..", "..")
-	files := []string{"README.md", "CHANGELOG.md", "BUGLOG.md"}
+	files := []string{"README.md", "README.ru.md", "CHANGELOG.md", "BUGLOG.md"}
 	for _, pattern := range []string{"docs/*.md", "docs/releases/*.md", "internal/agentguide/guide/*.md"} {
 		m, _ := filepath.Glob(filepath.Join(root, pattern))
 		for _, f := range m {
@@ -42,6 +42,12 @@ func TestTrackedDocsSpelling(t *testing.T) {
 	}
 	for _, f := range files {
 		raw, err := os.ReadFile(filepath.Join(root, f))
+		if os.IsNotExist(err) && f == "README.ru.md" {
+			// Sealed snapshots of a controller older than 0.19.2 do not
+			// carry README.ru.md yet (0.19.2 ship, 25.11).
+			t.Logf("%s not in this snapshot: not graded", f)
+			continue
+		}
 		if err != nil {
 			t.Fatal(err)
 		}

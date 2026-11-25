@@ -44,7 +44,7 @@ import (
 	"mcpshka/internal/verify"
 )
 
-const Version = "0.19.1"
+const Version = "0.19.2"
 
 func makeNetworkStageStatus(control controlplane.Snapshot, lane laneprovider.Status, laneErr error, network networkops.StateDigest, networkErr error) NetworkStageStatusResult {
 	return toolcontract.MakeNetworkStageStatus(control, lane, laneErr, network, networkErr)

@@ -12,12 +12,13 @@ import (
 	"regexp"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // Target is one public repository the open core goes to (25.11, owner:
 // GitHub, GitVerse, MosHub and SourceCraft). Auth: "basic:<user>" or
 // "bearer" with TokenFile as an http.extraHeader, or "ssh" with Key and a
-// pinned KnownHosts file. Credentials never reach argv or output.
+// pinned KnownHosts file. Credentials never reach argv (ps) or output.
 type Target struct {
 	Site       string `json:"site"`
 	URL        string `json:"url"`
@@ -94,12 +95,11 @@ func (p Publish) Run(ctx context.Context) (json.RawMessage, error) {
 	}
 	defer os.RemoveAll(scratch)
 	git := func(env []string, args ...string) (string, error) {
-		argv := []string{"--git-dir", p.GitDir, "-c", "credential.helper="}
-		if header != "" {
-			argv = append(argv, "-c", "http.extraHeader="+header)
-		}
-		cmd := exec.CommandContext(ctx, "git", append(argv, args...)...)
-		cmd.Env = append(append([]string{"PATH=/usr/bin:/bin", "GIT_TERMINAL_PROMPT=0", "HOME=/nonexistent", "LANG=C"}, extraEnv...), env...)
+		// Each git step is bounded; the header goes through GIT_CONFIG_* in the
+		// environment, never argv, so ps on the host does not show the token.
+		cctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+		defer cancel()
+		cmd := gitCommand(cctx, p.GitDir, header, append(extraEnv, env...), args)
 		var b bytes.Buffer
 		cmd.Stdout = &b
 		if err := cmd.Run(); err != nil {
@@ -167,6 +167,17 @@ func (p Publish) Run(ctx context.Context) (json.RawMessage, error) {
 	out["state"], out["public_commit"], out["parent"], out["tree_digest"] = "PUBLISHED", next, base, p.Digest
 	raw, _ := json.Marshal(out)
 	return raw, nil
+}
+
+// gitCommand builds one bounded git step; the auth header travels in the
+// environment (GIT_CONFIG_*), never in argv.
+func gitCommand(ctx context.Context, gitDir, header string, env, args []string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"--git-dir", gitDir, "-c", "credential.helper="}, args...)...)
+	cmd.Env = append([]string{"PATH=/usr/bin:/bin", "GIT_TERMINAL_PROMPT=0", "HOME=/nonexistent", "LANG=C", "GIT_HTTP_LOW_SPEED_LIMIT=1000", "GIT_HTTP_LOW_SPEED_TIME=60"}, env...)
+	if header != "" {
+		cmd.Env = append(cmd.Env, "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=http.extraHeader", "GIT_CONFIG_VALUE_0="+header)
+	}
+	return cmd
 }
 
 func readToken(path string) (string, error) {

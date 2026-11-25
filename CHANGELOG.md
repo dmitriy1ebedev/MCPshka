@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+## [0.19.2] — 2026-11-25
+
+Гейт вливания проверяет только задетые пакеты (выпуск — всегда полный набор), архитектурные проверки первыми, 4 куска распределённого CI с полным запасным путём на H96; токен открытого ядра не в argv, публикация не рвётся таймаутом клиента; README.md/README.ru.md по образцу топовых Go-проектов; install.sh без Python; llm.ask с моделью GigaChat доходит до GigaChat; internal/pipelineartifact из executor. Подробно — `docs/releases/RELEASE_0.19.2.md`.
+
 ## [0.19.1] — 2026-11-25
 
 Открытое ядро (opencore_preview/publish, CI в приватный mcpshka-ci, Apache-2.0), roadmap_close для потоков S (MCP-278), systemctl через системную шину (MCP-256), selfheal для Zigbee2MQTT после сбоя рестартов Docker, ночной бэкап при базе больше 64 МиБ, FAIL-строки из середины лога, валидный JSON для brain_ask, FreeLLM auto, mcp.mutate в code_run (S5.CM.6), S5.GO: бэкап состояния, будильник раннеров, публикация открытого ядра и forge_ci GitVerse на Go, храповик против нового Python; открытое ядро на GitHub, GitVerse, MosHub и SourceCraft со своим CI; приватные CI-репо — mcpshka-ci; brain_ask укладывает историю в окно модели. Подробно — `docs/releases/RELEASE_0.19.1.md`.

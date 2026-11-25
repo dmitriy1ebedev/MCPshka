@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -30,6 +31,7 @@ const (
 	affectedMaxPackages = 120
 	affectedMaxBytes    = 4000
 	archlintDir         = "./internal/archlint"
+	spellingDir         = "./internal/roadmapstyle"
 )
 
 var affectedPkgRE = regexp.MustCompile(`^\./(internal|cmd)(/[A-Za-z0-9_][A-Za-z0-9_.-]*)+$`)
@@ -91,6 +93,7 @@ type listedPackage struct {
 // and closes over reverse dependencies. ok=false selects the full suite.
 func SelectAffected(graph map[string][]string, changed []string) ([]string, bool) {
 	selected := map[string]bool{}
+	docs := false
 	for _, f := range changed {
 		if f == "" {
 			continue
@@ -108,6 +111,9 @@ func SelectAffected(graph map[string][]string, changed []string) ([]string, bool
 		}
 		if !found && !ignorable(f) {
 			return nil, false
+		}
+		if !found && strings.HasSuffix(f, ".md") {
+			docs = true
 		}
 	}
 	reverse := map[string][]string{}
@@ -132,6 +138,10 @@ func SelectAffected(graph map[string][]string, changed []string) ([]string, bool
 	}
 	if _, ok := graph[archlintDir]; ok {
 		selected[archlintDir] = true
+	}
+	// Documents are graded by the spelling gate.
+	if _, ok := graph[spellingDir]; ok && docs {
+		selected[spellingDir] = true
 	}
 	out := make([]string, 0, len(selected))
 	for p := range selected {
@@ -243,7 +253,12 @@ func RunAffected(ctx context.Context, list string, out io.Writer) int {
 		return 2
 	}
 	pkgs := strings.Split(list, " ")
-	for _, args := range [][]string{append([]string{"vet", "-p", "1"}, pkgs...), append([]string{"test", "-p", "1", "-count=1", "-timeout=45m"}, pkgs...)} {
+	// Architecture checks first: they fail in seconds.
+	steps := [][]string{append([]string{"vet", "-p", "1"}, pkgs...), append([]string{"test", "-p", "1", "-count=1", "-timeout=45m"}, pkgs...)}
+	if slices.Contains(pkgs, archlintDir) {
+		steps = append([][]string{{"test", "-count=1", archlintDir}}, steps...)
+	}
+	for _, args := range steps {
 		c := exec.CommandContext(ctx, "go", args...)
 		c.Stdout, c.Stderr = out, out
 		if e := c.Run(); e != nil {

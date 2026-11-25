@@ -42,7 +42,10 @@ const (
 // moduleCacheSource is the fixed root cache; tests point it at a fixture.
 var moduleCacheSource = ModuleCacheRoot
 
-var moduleTestCommand = []string{"go", "test", "-p", "1", "-count=1", "-timeout=45m", "./..."} // go's 10m default killed mcpserver on H96
+// The architecture checks run first: a monolith over its cap fails in
+// seconds instead of after the 40-minute suite (25.11, 0194). go's 10m
+// default timeout killed mcpserver on H96, hence 45m.
+var moduleTestCommand = []string{"/bin/sh", "-ec", "go test -count=1 ./internal/archlint\ngo test -p 1 -count=1 -timeout=45m ./..."}
 
 // The affected profile (ROADMAP S5.FAST.3) runs the integration gate over the
 // packages a merge touches. Root seals the list into the run environment;

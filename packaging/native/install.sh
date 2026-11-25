@@ -24,7 +24,8 @@ if [[ ! -x "$SOURCE_BIN" ]]; then
   exit 1
 fi
 
-new_version="$(python3 -I -S /usr/local/libexec/mcpshka-release-probe.py "$SOURCE_BIN" version)"
+# The binary reports its own version (no host-specific helper: S5.GO, works on a fresh host).
+new_version="$(timeout 10 "$SOURCE_BIN" version 2>/dev/null | head -n 1 || true)"
 if [[ "$new_version" != mcpshka* ]]; then
   echo "source binary failed version check" >&2
   exit 1

@@ -117,7 +117,9 @@ func Register(add func(tooldef.Def), store *idempotency.Store, requireAdmin func
 				return Result{Manifest: m}, err
 			}
 			defer os.RemoveAll(dest)
-			child, cancel := context.WithTimeout(ctx, 10*time.Minute)
+			// Detached from the request: a client that gives up after 60 s must
+			// not cut the slowest site off mid-push (25.11: SourceCraft lagged).
+			child, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
 			defer cancel()
 			// Every target gets the same tree; one failing site does not stop the others.
 			var all []json.RawMessage

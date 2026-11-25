@@ -16,7 +16,7 @@ import (
 
 // BrokerVersion identifies this running broker image, never a file on disk.
 // The controller test enforces equality with its release version literal.
-const BrokerVersion = "0.19.1"
+const BrokerVersion = "0.19.2"
 
 var brokerImageSHA = sync.OnceValue(func() string { return fileSHA("/proc/self/exe") })
 

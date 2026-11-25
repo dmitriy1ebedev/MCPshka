@@ -153,7 +153,7 @@ func projectTestTree(ctx context.Context, repo, commit, pkg string) ([]byte, err
 	if moduleSnapshot(pkg) {
 		return snapshotfiles.ModuleTree(func() ([]byte, error) {
 			return gitSnapshotRead(ctx, repo, "ls-tree", "-rz", commit, "--",
-				"go.mod", "go.sum", "VERSION", "cmd", "internal", "packaging", "README.md", "CHANGELOG.md", "BUGLOG.md", "docs")
+				"go.mod", "go.sum", "VERSION", "cmd", "internal", "packaging", "README.md", "README.ru.md", "CHANGELOG.md", "BUGLOG.md", "docs")
 		}, ErrHold)
 	}
 	return gitSnapshotRead(ctx, repo, "ls-tree", "-rz", commit, "--", "go.mod", "go.sum", "internal")

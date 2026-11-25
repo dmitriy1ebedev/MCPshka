@@ -32,6 +32,11 @@ func TestSelectAffectedClosesOverReverseDependencies(t *testing.T) {
 	if got, ok := SelectAffected(affectedGraph(), []string{"README.md", "docs/x.md"}); !ok || !slices.Equal(got, []string{"./internal/archlint"}) {
 		t.Fatal("documentation runs only the architecture checks:", got, ok)
 	}
+	g := affectedGraph()
+	g["./internal/roadmapstyle"] = nil
+	if got, ok := SelectAffected(g, []string{"README.ru.md"}); !ok || !slices.Equal(got, []string{"./internal/archlint", "./internal/roadmapstyle"}) {
+		t.Fatal("documents also run the spelling gate:", got, ok)
+	}
 }
 
 func TestSelectAffectedFallsBackToTheFullSuite(t *testing.T) {
