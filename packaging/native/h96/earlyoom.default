@@ -1,0 +1,3 @@
+# H96 (инцидент 09.11: хост завис на ~3.5 ч в своп-трэше, OOM-killer не сработал)
+# Убивать при RAM<6% и свопе<15%; сначала тяжёлое и неважное, дом и связь не трогать.
+EARLYOOM_ARGS="-m 6 -s 15 -r 3600 -n --prefer ^(claude|codex|ffmpeg|torrserver|go|compile|cc1|link|gopls|chrome|chromium|headless_shell|node_modules)$ --avoid ^(2\.1\.[0-9]+|python3|MainThread|node|mosquitto|sshd|sshd-session|tailscaled|mcpshka|mcpshka-broker|dockerd|containerd|containerd-shim|systemd|systemd-journal|NetworkManager|dnsmasq|dnscrypt-proxy|go2rtc|matter-server)$"

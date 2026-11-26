@@ -1,0 +1,68 @@
+name: MCPshka CI
+
+# Not on push to main: the same commit already passed snapshot-contracts on
+# its immutable snapshot branch (the integration gate), so a main run only
+# repeated it (CI fan-out, packaging/ci/plan.json).
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Same as snapshot-contracts.yml: MCPshka refuses root on purpose, so
+      # tests run as an unprivileged user under tini (main failed as root).
+      - name: Git 2.44+ and tini, as on H96
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends software-properties-common tini
+          timeout 120 add-apt-repository -y ppa:git-core/ppa || echo "::warning::git-core PPA unreachable"
+          apt-get update -qq && apt-get install -y --no-install-recommends git
+      - name: Go tests (unprivileged)
+        run: |
+          id ci >/dev/null 2>&1 || useradd --create-home --uid 10001 ci
+          chown -R ci:ci "$GITHUB_WORKSPACE"
+          gobin="$(dirname "$(command -v go)")"
+          runuser -u ci -- env -i PATH="$gobin:/usr/bin:/bin" HOME=/home/ci LANG=C \
+            GOCACHE=/home/ci/.cache/go-build GOMODCACHE=/home/ci/go/pkg/mod GOFLAGS=-mod=readonly \
+            /usr/bin/tini -s -g -- go test -p 2 -count=1 ./...
+      - name: Cloud fan-in contracts and deterministic source identity
+        run: |
+          python3 -B -m unittest discover -s packaging/cloud -p 'test_*.py'
+          python3 -B -m unittest discover -s packaging/gitverse -p 'test_*.py'
+          python3 -B -m unittest discover -s packaging/moshub -p 'test_*.py'
+          python3 packaging/cloud/source_digest.py --repo .
+
+  build-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify Linux ARM64 cross-build
+        run: python3 packaging/lab/build_matrix.py --arch arm64
+
+  build-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify Linux AMD64 build
+        run: python3 packaging/lab/build_matrix.py --arch amd64

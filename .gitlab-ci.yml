@@ -1,0 +1,42 @@
+# Open core CI (overlay from packaging/opencore/public): every push to the
+# public main runs vet and the full Go suite as an unprivileged user.
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH =~ /^ci\/[0-9a-f]{12}\/shard-[0-3]$/'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - when: never
+
+test:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_PIPELINE_SOURCE == "merge_request_event"'
+  image: golang:1.26.0-trixie
+  # MosHub shared runners reject untagged jobs.
+  tags: [appsechub]
+  timeout: 50m
+  variables:
+    GOMAXPROCS: '2'
+    GOPROXY: 'https://proxy.golang.org|https://goproxy.io|direct'
+  before_script:
+    - |
+      cp /etc/apt/sources.list.d/debian.sources /tmp/debian.sources.orig
+      for m in https://mirror.yandex.ru http://ftp.ru.debian.org http://deb.debian.org; do
+        sed "s|http://deb.debian.org|$m|g" /tmp/debian.sources.orig > /etc/apt/sources.list.d/debian.sources
+        apt-get -o Acquire::Retries=2 update -qq && apt-get install -y --no-install-recommends sqlite3 passwd util-linux tini && break
+      done
+  script:
+    - |
+      id ci >/dev/null 2>&1 || useradd --create-home --uid 10001 ci
+      chown -R ci:ci .
+      gobin="$(dirname "$(command -v go)")"
+      runuser -u ci -- env -i PATH="$gobin:/usr/bin:/bin" HOME=/home/ci LANG=C GOTOOLCHAIN="${GOTOOLCHAIN:-auto}" GOFLAGS=-mod=readonly go vet ./...
+      runuser -u ci -- env -i PATH="$gobin:/usr/bin:/bin" HOME=/home/ci LANG=C GOTOOLCHAIN="${GOTOOLCHAIN:-auto}" GOFLAGS=-mod=readonly /usr/bin/tini -s -g -- go test -p 2 -count=1 ./...
+
+distributed-shard:
+  image: golang:1.26.0-trixie
+  tags: [appsechub]
+  timeout: 50m
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^ci\/[0-9a-f]{12}\/shard-[0-3]$/'
+  script:
+    - CI_PUBLIC_REF="$CI_COMMIT_BRANCH" CI_RUN_ID="$CI_PIPELINE_ID" sh packaging/ci/distributed_shard.sh moshub

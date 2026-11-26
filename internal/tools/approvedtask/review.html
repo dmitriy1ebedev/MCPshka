@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{font:16px system-ui;color:var(--color-text-primary,CanvasText);padding:8px}
+button{font:inherit;min-height:44px;margin:4px 8px 4px 0;padding:0 12px}
+</style>
+<p id="status" role="status">Ожидаю подготовленный запрос MCPshka.</p>
+<button id="run" type="button" disabled>Run</button>
+<button id="cancel" type="button">Cancel</button>
+<script>
+const statusLine = document.getElementById("status");
+const run = document.getElementById("run");
+const cancel = document.getElementById("cancel");
+let approval, taskID, dismissed = false, launched = false, finished = false;
+let sequence = 2, pending = 0, timeout, timer, budget = 0;
+const send = (request) => parent.postMessage({jsonrpc:"2.0", ...request}, "*");
+const terminal = new Set(["DONE", "FAILED", "VERIFY_FAILED", "EXPIRED", "CANCELLED"]);
+
+function schedule(delay) {
+  clearTimeout(timer);
+  if (!dismissed && taskID && budget > 0 && !document.hidden) timer = setTimeout(checkStatus, delay);
+}
+
+function checkStatus() {
+  if (dismissed || !taskID || pending || budget <= 0) return;
+  budget--;
+  const id = ++sequence;
+  pending = id;
+  send({id, method:"tools/call", params:{name:"get_tool_result", arguments:{call_id:taskID}}});
+  timeout = setTimeout(() => {
+    if (pending !== id) return;
+    pending = 0;
+    statusLine.textContent = "Связь прервалась. Проверяю ту же задачу.";
+    schedule(2500);
+  }, 6000);
+}
+
+function showStatus(result) {
+  if ((result?.call_id ?? result?.id) !== taskID || finished) return;
+  if (terminal.has(result.state)) {
+    finished = true;
+    clearTimeout(timer);
+    budget = 0;
+    run.disabled = true;
+    const label = result.state === "DONE" && result.effect === "applied" ? "Выполнено"
+      : result.state === "EXPIRED" ? "Срок подтверждения истёк"
+      : result.state === "CANCELLED" ? "Отменено"
+      : result.effect === "unknown" ? "Итог требует проверки на сервере" : "Задача завершилась с ошибкой";
+    const message = label + " · " + taskID;
+    statusLine.textContent = message;
+    send({id:++sequence, method:"ui/update-model-context", params:{content:[{type:"text", text:message}]}});
+    return;
+  }
+  if (result.state === "RUNNING" || result.approval_state === "authorized") {
+    run.disabled = true;
+    statusLine.textContent = "Подтверждение получено. Сервер выполняет задачу.";
+  } else if (result.approval_state === "awaiting_face_id") {
+    run.disabled = !approval || launched;
+    statusLine.textContent = launched ? "Ожидаю Face ID и результат сервера." : "Run откроет точный план операции и подтверждение Face ID.";
+  } else if (result.approval_state === "approval_expired" || result.approval_state === "authorization_expired") {
+    run.disabled = true;
+    budget = 0;
+    statusLine.textContent = "Срок подтверждения истёк.";
+  }
+  schedule(2500);
+}
+
+window.addEventListener("message", ({source, data: message}) => {
+  if (source !== parent || message?.jsonrpc !== "2.0" || dismissed) return;
+  if (message.id === 1 && message.result) send({method:"ui/notifications/initialized",params:{}});
+  if (message.id === 2 && (message.error || message.result?.isError)) {
+    launched = false;
+    run.disabled = !approval;
+    statusLine.textContent = "Откройте ссылку подтверждения из ответа MCPshka.";
+  }
+  if (pending && message.id === pending) {
+    clearTimeout(timeout);
+    pending = 0;
+    if (message.error || message.result?.isError) {
+      statusLine.textContent = "Статус сейчас недоступен. Серверная задача сохранена.";
+      schedule(2500);
+    } else {
+      showStatus(message.result?.structuredContent);
+    }
+    return;
+  }
+  if (message.method !== "ui/notifications/tool-result") return;
+  const result = message.params?.structuredContent;
+  if (!/^[a-f0-9]{32}$/.test(result?.id) || (taskID && result.id !== taskID)) return;
+  taskID = result.id;
+  if (!approval && result.state === "AWAITING_FACE_ID" && result.approval_state === "awaiting_face_id") {
+    try {
+      const url = new URL(result.approval_url);
+      const prefix = /^\/approval\/([a-f0-9]{8,32})$/.exec(url.pathname)?.[1];
+      if (url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash &&
+          prefix && taskID.startsWith(prefix)) approval = url.href;
+    } catch {}
+  }
+  showStatus(result);
+});
+run.onclick = () => {
+  if (!approval || dismissed || launched) return;
+  launched = true;
+  run.disabled = true;
+  send({id:2,method:"ui/open-link",params:{url:approval}});
+  budget = 12;
+  schedule(1100);
+};
+function resume() {
+  if (dismissed || finished || !taskID || document.hidden) return;
+  budget = launched ? 8 : 1;
+  schedule(0);
+}
+window.addEventListener("online", resume);
+window.addEventListener("pageshow", resume);
+document.addEventListener("visibilitychange", resume);
+cancel.onclick = () => {
+  dismissed = true;
+  clearTimeout(timer);
+  clearTimeout(timeout);
+  run.hidden = cancel.hidden = true;
+  statusLine.textContent = "Карточка закрыта. Статус задачи доступен в MCPshka.";
+};
+send({id:1,method:"ui/initialize",params:{appInfo:{name:"MCPshka approval",version:"1.0.0"},appCapabilities:{},protocolVersion:"2026-01-26"}});
+</script>
+</html>

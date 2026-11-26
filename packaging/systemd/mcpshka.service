@@ -1,0 +1,59 @@
+[Unit]
+Description=MCPshka MCP remote-control agent
+Documentation=file:/root/repos/mcpshka/README.md
+After=network-online.target mcpshka-broker.service
+Wants=network-online.target
+Requires=mcpshka-broker.service
+
+[Service]
+Type=simple
+User=mcpshka
+Group=mcpshka
+UMask=0077
+EnvironmentFile=/etc/mcpshka/mcpshka.env
+Environment=MCPSHKA_PRIVILEGED_BROKER=1
+Environment=MCPSHKA_JOB_SCOPES=off
+ExecStart=/usr/local/bin/mcpshka mcp-http
+WorkingDirectory=/root/repos
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=10s
+KillMode=mixed
+
+StateDirectory=mcpshka
+StateDirectoryMode=0700
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+# P5.3: Delegate hands the server its own cgroup subtree (server/ + heavy/);
+# the rest of /sys/fs/cgroup stays root-owned, so read-only protection is moot.
+Delegate=yes
+ProtectControlGroups=false
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+# Any repository: file ownership decides (root 0700 stores stay closed);
+# onboard a root-owned repository with packaging/native/adopt-repo.sh.
+ReadWritePaths=-/root/repos
+ReadWritePaths=-/var/lib/chatops
+ReadWritePaths=/var/lib/mcpshka
+InaccessiblePaths=-/etc/mcpshka/mcp-auth-header
+InaccessiblePaths=-/root/.ssh
+InaccessiblePaths=-/root/.config
+
+MemoryMax=1536M
+TasksMax=128
+CPUQuota=250%
+
+[Install]
+WantedBy=multi-user.target

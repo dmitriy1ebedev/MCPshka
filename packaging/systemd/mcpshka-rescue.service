@@ -1,0 +1,21 @@
+[Unit]
+Description=MCPshka independent bounded tunnel recovery check
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/mcpshka-rescue.py watch
+User=root
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/mcpshka /run
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryMax=128M
+CPUQuota=25%
+TasksMax=32
+TimeoutStartSec=60s

@@ -1,0 +1,28 @@
+[Unit]
+Description=MCPshka out-of-band path: reverse SSH to the stand VPS (independent of mcpshka and LANE)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=mcpshka
+EnvironmentFile=/etc/mcpshka/oob-tunnel.env
+# Only the VPS loopback is published; nothing on the VPS (OpenVPN, firewall)
+# is touched. sshd on H96 admits the stand's key only from loopback and only
+# with the forced command mcpshka-oob.py serve vps.
+ExecStart=/usr/bin/ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ConnectTimeout=10 -o UserKnownHostsFile=${OOB_KNOWN_HOSTS} -i ${OOB_KEY} -R 127.0.0.1:${OOB_PORT}:127.0.0.1:22 ${OOB_TARGET}
+Restart=always
+RestartSec=15
+# A changed VPS host key or an unreachable stand fails every attempt: back off
+# to one try per 15 min instead of 5 760 ssh starts a day (10 550 on 08.11).
+RestartSteps=6
+RestartMaxDelaySec=15min
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+MemoryMax=32M
+CPUQuota=5%
+TasksMax=4
+
+[Install]
+WantedBy=multi-user.target

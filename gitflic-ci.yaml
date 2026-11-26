@@ -1,0 +1,24 @@
+# GitFlic — one of the interchangeable CI sites: forge contracts, go vet and
+# short fuzzing. Pipelines name their commit and ref, so MCPshka reads the
+# pipeline state directly; report.json records the per-check results.
+stages:
+  - complement
+
+contracts-vet-fuzz:
+  stage: complement
+  image: golang:1.26-bookworm
+  rules:
+    - if: $CI_COMMIT_REF_NAME =~ /^mcpshka-snapshots\//
+  script:
+    - apt-get update -qq && apt-get install -y --no-install-recommends python3 >/dev/null
+    - python3 -B -m unittest discover -s packaging/gitverse -p 'test_*.py'
+    - python3 -B -m unittest discover -s packaging/moshub -p 'test_*.py'
+    - python3 -B -m unittest discover -s packaging/cloud -p 'test_*.py'
+    - python3 -B -m unittest discover -s packaging/forges -p 'test_*.py'
+    - GOFLAGS=-mod=readonly go vet ./...
+    - go test -run '^$' -fuzz FuzzMutationRetryKey -fuzztime 60s ./internal/mcpserver
+    - git config --global --add safe.directory "$PWD"
+    - printf '{"schema":"mcpshka.forge-report/v1","site":"gitflic","commit":"%s","tree":"%s","checks":{"contracts":"success","vet":"success","fuzz":"success"}}\n' "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" > report.json
+  artifacts:
+    paths:
+      - report.json

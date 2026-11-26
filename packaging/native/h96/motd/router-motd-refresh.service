@@ -1,0 +1,14 @@
+[Unit]
+Description=Refresh cached H96 SSH MOTD outside PAM login
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/router-motd-refresh --force
+TimeoutStartSec=35s
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=50%
+MemoryMax=256M
+NoNewPrivileges=true
+PrivateTmp=true

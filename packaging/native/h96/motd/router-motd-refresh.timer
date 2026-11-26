@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh cached H96 SSH MOTD periodically
+
+[Timer]
+OnBootSec=90s
+OnUnitInactiveSec=3min
+AccuracySec=30s
+RandomizedDelaySec=15s
+Unit=router-motd-refresh.service
+
+[Install]
+WantedBy=timers.target

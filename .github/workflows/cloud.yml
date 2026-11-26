@@ -1,0 +1,186 @@
+name: MCPshka bounded cloud checks
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [main]
+    # Draft PRs (WIP, Codex) do not spend Actions minutes; mark ready to gate.
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact reviewed commit to test
+        required: true
+      suite:
+        description: release, race, fuzz, build, or release-arm64
+        required: true
+        default: release
+      shard_sites:
+        description: Active race sites (packaging/ci/plan.json); this run tests only GitHub's share
+        required: false
+        default: github,moshub
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        # PRs must exercise every release gate, not only specially named branches.
+        # Manual dispatch runs only the selected suite to avoid duplicate jobs.
+        suite: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.suite) || '["release","race","fuzz","build","release-arm64"]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GOMAXPROCS: "4"
+      GOMEMLIMIT: 1400MiB
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      SUITE: ${{ inputs.suite || matrix.suite }}
+      # A PR run is GitHub acting as the whole gate (GitVerse down): race covers
+      # every package. A dispatch covers only GitHub's share of the fan-out.
+      SHARD_SITES: ${{ github.event_name == 'pull_request' && 'github' || inputs.shard_sites || 'github,moshub' }}
+    steps:
+      - name: Checkout isolated source
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          # Go #75804 leaks the fuzztime deadline as failure before 1.27.
+          go-version: ${{ (inputs.suite || matrix.suite) == 'fuzz' && '1.27.2' || '' }}
+          go-version-file: go.mod
+          cache: true
+      - name: Verify pinned source and runner
+        run: |
+          set -eu
+          EXPECTED_SHA="${EXPECTED_SHA:-${GITHUB_SHA:-}}"
+          SUITE="${SUITE:-release}"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(id -u)" != 0
+          case "$SUITE" in release|race|fuzz|build|release-arm64) ;; *) exit 2 ;; esac
+          mkdir -p "$RUNNER_TEMP/mcpshka-results"
+          git rev-parse HEAD > "$RUNNER_TEMP/mcpshka-results/source-sha.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/mcpshka-results/source-tree.txt"
+          go version > "$RUNNER_TEMP/mcpshka-results/toolchain.txt"
+      - name: Install native and workflow contract dependencies (PyYAML)
+        run: |
+          set -eu
+          python3 -m venv "$RUNNER_TEMP/mcpshka-python"
+          "$RUNNER_TEMP/mcpshka-python/bin/python" -m pip install --disable-pip-version-check -r packaging/native/requirements-cloud.txt
+          echo "$RUNNER_TEMP/mcpshka-python/bin" >> "$GITHUB_PATH"
+      - name: Validate distributed CI tools and source identity
+        shell: bash
+        run: |
+          python3 -B -m unittest discover -s packaging/cloud -p 'test_*.py'
+          python3 -B -m unittest discover -s packaging/gitverse -p 'test_*.py'
+          python3 packaging/cloud/source_digest.py --repo . > "$RUNNER_TEMP/mcpshka-results/source-identity.json"
+      - name: Run checks with bounded logs
+        shell: bash
+        run: |
+          set -euo pipefail
+          SUITE="${SUITE:-release}"
+          out="$RUNNER_TEMP/mcpshka-results"
+          : > "$out/checks.log"
+          capture() {
+            # Bound the log writer, not compiler objects or fuzz instrumentation.
+            "$@" 2>&1 | (ulimit -c 0; ulimit -f 32768; cat >> "$out/checks.log")
+          }
+          case "$SUITE" in
+            release-arm64)
+              # Cloud-only, diagnostic prebuilt candidate: no signing or deploy authority.
+              capture timeout 240s sudo apt-get update -qq
+              capture timeout 240s sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+              capture timeout 600s sh packaging/native/build-runner-assets.sh
+              capture timeout 900s env GOOS=linux GOARCH=arm64 CGO_ENABLED=1 CC=aarch64-linux-gnu-gcc go build -p 2 -trimpath -buildvcs=false -o "$out/mcpshka-linux-arm64" ./cmd/mcpshka
+              capture aarch64-linux-gnu-readelf -h "$out/mcpshka-linux-arm64"
+              aarch64-linux-gnu-readelf -h "$out/mcpshka-linux-arm64" | grep -q 'Machine:.*AArch64'
+              sha256sum "$out/mcpshka-linux-arm64" > "$out/release-arm64-sha256.txt"
+              go version -m "$out/mcpshka-linux-arm64" > "$out/release-arm64-buildinfo.txt"
+              broker_out="$RUNNER_TEMP/mcpshka-broker-results"
+              mkdir -p "$broker_out"
+              capture timeout 600s env GOOS=linux GOARCH=arm64 CGO_ENABLED=1 CC=aarch64-linux-gnu-gcc go build -p 2 -trimpath -buildvcs=false -o "$broker_out/mcpshka-broker-linux-arm64" ./cmd/mcpshka-broker
+              aarch64-linux-gnu-readelf -h "$broker_out/mcpshka-broker-linux-arm64" | grep -q 'Machine:.*AArch64'
+              sha256sum "$broker_out/mcpshka-broker-linux-arm64" > "$broker_out/sha256.txt"
+              go version -m "$broker_out/mcpshka-broker-linux-arm64" > "$broker_out/buildinfo.txt"
+              # Release-arm64 now carries both same-tree executables.
+              # A paired upgrade must verify both independently.
+              cp "$broker_out/mcpshka-broker-linux-arm64" "$out/mcpshka-broker-linux-arm64"
+              cp "$broker_out/sha256.txt" "$out/broker-arm64-sha256.txt"
+              cp "$broker_out/buildinfo.txt" "$out/broker-arm64-buildinfo.txt"
+              cp "$out/source-sha.txt" "$out/source-tree.txt" "$out/source-identity.json" "$out/toolchain.txt" "$broker_out/"
+              ;;
+            build)
+              capture timeout 420s python3 packaging/lab/build_matrix.py
+              ;;
+            release)
+              capture timeout 1600s python3 packaging/native/test-plan.py RELEASE --run --timeout 1500
+              ;;
+            race)
+              # LPT share by measured package weight; MosHub runs the rest.
+              pkgs=$(python3 packaging/ci/shard.py --site github --suite race --sites "$SHARD_SITES")
+              echo "race share ($SHARD_SITES): $pkgs"
+              # Instrumented server tests can exceed Go's default ten-minute package limit.
+              capture timeout 1600s go test -race -timeout=20m -count=1 -p 2 -json $pkgs
+              ;;
+            fuzz)
+              : > "$out/checks.log"
+              for target in \
+                internal/mcpserver:Fuzz \
+                internal/codexcoord:Fuzz \
+                internal/jobs:Fuzz \
+                internal/roadmapscan:Fuzz; do
+                package=${target%%:*}
+                # Select each existing target explicitly to avoid Go's multiple-match error.
+                go test -p 1 -list '^Fuzz' "./$package" | while IFS= read -r name; do
+                  case "$name" in Fuzz*) capture timeout 300s go test -p 1 -run '^$' -fuzz "^$name$" -fuzztime 30s -parallel 2 "./$package" ;; esac
+                done
+              done
+              ;;
+          esac
+          test "$(stat -c %s "$out/checks.log")" -le 33554432
+      - name: Summarize release observations
+        if: always()
+        shell: bash
+        run: |
+          out="$RUNNER_TEMP/mcpshka-results"
+          if [ -f "$out/checks.log" ] && [ -f "$out/source-sha.txt" ] && [ "${SUITE:-release}" = release ]; then
+            python3 packaging/native/cloud-results.py --log "$out/checks.log" --expected-sha "$(cat "$out/source-sha.txt")" > "$out/summary.json"
+            cat "$out/summary.json"
+          fi
+      - name: Preserve bounded results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpshka-cloud-${{ inputs.suite || matrix.suite }}-results
+          path: ${{ runner.temp }}/mcpshka-results
+          retention-days: 3
+          if-no-files-found: error
+      - name: Preserve fuzz regression inputs
+        if: always() && (inputs.suite || matrix.suite) == 'fuzz'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpshka-cloud-fuzz-corpus
+          path: |
+            internal/mcpserver/testdata/fuzz
+            internal/codexcoord/testdata/fuzz
+            internal/jobs/testdata/fuzz
+            internal/roadmapscan/testdata/fuzz
+          retention-days: 3
+          if-no-files-found: ignore
+      - name: Preserve privileged broker candidate separately
+        if: success() && (inputs.suite || matrix.suite) == 'release-arm64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpshka-cloud-broker-arm64-candidate
+          path: ${{ runner.temp }}/mcpshka-broker-results
+          retention-days: 3
+          if-no-files-found: error
