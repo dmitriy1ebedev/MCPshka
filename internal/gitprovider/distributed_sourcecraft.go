@@ -65,7 +65,7 @@ func (p *CIProvider) loadSourceCraft(ctx context.Context, plan distributedci.Pla
 			} `json:"workflows"`
 		} `json:"runs"`
 	}
-	if e := p.Client.ciJSON(ctx, "GET", p.Client.ciRoute()+"/cicd/runs?page_size=20", nil, &data); e != nil {
+	if e := p.Client.ciJSON(ctx, "GET", p.route()+"/cicd/runs?page_size=20", nil, &data); e != nil {
 		return e
 	}
 	for _, r := range data.Runs {
@@ -120,7 +120,7 @@ func (p *CIProvider) fetchSourceCraftBuild(ctx context.Context, plan distributed
 			}
 		}
 	}
-	if e := p.Client.ciJSON(ctx, "GET", p.Client.ciRoute()+"/cicd/runs?page_size=20", nil, &data); e != nil {
+	if e := p.Client.ciJSON(ctx, "GET", p.route()+"/cicd/runs?page_size=20", nil, &data); e != nil {
 		return nil, e
 	}
 	for _, r := range data.Runs {

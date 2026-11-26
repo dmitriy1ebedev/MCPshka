@@ -69,7 +69,7 @@ func (p *CIProvider) FetchArtifact(ctx context.Context, plan distributedci.Plan,
 		return nil, distributedci.ErrEvidence
 	}
 	c := p.Client
-	route := c.ciRoute()
+	route := p.route()
 	if c.site == SourceCraft {
 		return p.fetchSourceCraftBuild(ctx, plan, o, a)
 	}

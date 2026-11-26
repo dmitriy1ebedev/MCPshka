@@ -31,6 +31,6 @@ class OOBTests(unittest.TestCase):
  def test_paths_accept_only_their_network(self):
   m=types.ModuleType('oob');exec(compile(SOURCE.read_text(),str(SOURCE),'exec'),m.__dict__)
   self.assertTrue(m.client_allowed('vps','127.0.0.1'));self.assertFalse(m.client_allowed('vps','192.168.0.5'))
-  self.assertTrue(m.client_allowed('tailscale','100.77.1.11'));self.assertFalse(m.client_allowed('tailscale','127.0.0.1'))
+  self.assertTrue(m.client_allowed('tailscale','100.77.1.12'));self.assertFalse(m.client_allowed('tailscale','127.0.0.1'))
   self.assertFalse(m.client_allowed('tailscale',''))
 if __name__=='__main__':unittest.main()

@@ -8,11 +8,12 @@ import (
 	"mcpshka/internal/dockersmoke"
 	"mcpshka/internal/executor"
 	"mcpshka/internal/homeguard"
-	"mcpshka/internal/statebackup"
 	"mcpshka/internal/hostcleanup"
 	"mcpshka/internal/projectrelease"
 	"mcpshka/internal/rootbroker"
+	"mcpshka/internal/rootbroker/diagtraffic"
 	"mcpshka/internal/selfprof"
+	"mcpshka/internal/statebackup"
 	"mcpshka/internal/unitbus"
 	"net"
 	"os"
@@ -32,6 +33,27 @@ func main() {
 		os.Exit(2)
 	}
 	switch os.Args[1] {
+	case "diag-traffic":
+		ctx, cancel := context.WithTimeout(context.Background(), 28*time.Second)
+		code, err := diagtraffic.Run(ctx, os.Args[2:], os.Stdout)
+		cancel()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "diag traffic:", err)
+			if code == 0 {
+				code = 1
+			}
+		}
+		os.Exit(code)
+	case "diag-traffic-worker":
+		signals, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		ctx, cancel := context.WithTimeout(signals, 9*time.Minute)
+		err := diagtraffic.Worker(ctx, os.Args[2:])
+		cancel()
+		stop()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "diag traffic worker:", err)
+			os.Exit(1)
+		}
 	case "state-backup":
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()

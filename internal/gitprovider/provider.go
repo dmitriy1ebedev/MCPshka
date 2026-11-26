@@ -112,6 +112,8 @@ func tokenFromVault(site Site) (string, error) {
 		filename = "/var/lib/mcpshka/moshub/api_token"
 	case SourceCraft:
 		filename = "/var/lib/mcpshka/sourcecraft/token"
+	case GitFlic:
+		filename = "/var/lib/mcpshka/gitflic/token"
 	default:
 		return "", errors.New("unsupported credential provider")
 	}

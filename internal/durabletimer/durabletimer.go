@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"time"
 
+	"mcpshka/internal/runoutcome"
 	"mcpshka/internal/statestore"
 )
 
@@ -44,57 +45,85 @@ func (s Store) Add(t Timer) error {
 	return nil
 }
 
-func (s Store) last(id string) int64 {
+func (s Store) last(id string) (int64, error) {
 	raw, err := s.DB.Get("timers/" + id + "/last")
-	if err != nil {
-		return -1
+	if errors.Is(err, os.ErrNotExist) {
+		return -1, nil
 	}
-	n, err := strconv.ParseInt(string(raw), 10, 64)
 	if err != nil {
-		return -1
+		return -1, err
 	}
-	return n
+	return strconv.ParseInt(string(raw), 10, 64)
 }
 
 // Tick fires due timers. Concurrent ticks (two processes, a restarted
 // service) cannot fire the same slot twice.
 func (s Store) Tick(now time.Time) ([]Fire, error) {
+	fires, _, err := s.TickWithOutcome(now)
+	return fires, err
+}
+
+// TickWithOutcome reports published timer slots. The consumer reports its own work.
+func (s Store) TickWithOutcome(now time.Time) ([]Fire, runoutcome.Result, error) {
+	fires, contended, err := s.tick(now)
+	blocker, next := "", ""
+	if err != nil {
+		blocker, next = "timer_store_unavailable", "inspect durable timer storage before retrying"
+	} else if len(fires) == 0 && contended {
+		blocker, next = "timer_slot_already_claimed", "observe the existing timer event before rescheduling"
+	}
+	out := runoutcome.Resolve(len(fires), contended, blocker, next)
+	return fires, out, errors.Join(err, runoutcome.Record(s.DB, "durabletimer", now.UTC().Format(time.RFC3339Nano), out, now))
+}
+
+func (s Store) tick(now time.Time) ([]Fire, bool, error) {
 	var fires []Fire
+	var contended bool
 	var timers []Timer
 	err := s.DB.Scan("timers/", func(key string, raw []byte) error {
 		var t Timer
-		if len(key) > 4 && key[len(key)-4:] == "/def" && json.Unmarshal(raw, &t) == nil {
-			timers = append(timers, t)
+		if len(key) <= 4 || key[len(key)-4:] != "/def" {
+			return nil
 		}
+		if json.Unmarshal(raw, &t) != nil || !validID.MatchString(t.ID) || t.Period < time.Minute {
+			return errors.New("invalid persisted timer definition")
+		}
+		timers = append(timers, t)
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	for _, t := range timers {
 		if now.Before(t.Start) {
 			continue
 		}
 		slot := int64(now.Sub(t.Start) / t.Period)
-		prev := s.last(t.ID)
+		prev, err := s.last(t.ID)
+		if err != nil {
+			return fires, contended, err
+		}
 		if slot <= prev {
 			continue
 		}
 		won, err := s.DB.PutIfAbsent("timers/"+t.ID+"/fired/"+strconv.FormatInt(slot, 10), []byte(now.UTC().Format(time.RFC3339)))
 		if err != nil {
-			return fires, err
+			return fires, contended, err
 		}
 		if !won {
+			contended = true
 			continue
 		}
-		_ = s.DB.Put("timers/"+t.ID+"/last", []byte(strconv.FormatInt(slot, 10)))
 		missed := slot - prev - 1
 		if prev < 0 {
 			missed = 0
 		}
 		fires = append(fires, Fire{Timer: t.ID, Slot: slot, Missed: missed, At: now.UTC()})
+		if err := s.DB.Put("timers/"+t.ID+"/last", []byte(strconv.FormatInt(slot, 10))); err != nil {
+			return fires, contended, err
+		}
 	}
-	return fires, s.DB.Put("timers/_heartbeat", []byte(now.UTC().Format(time.RFC3339Nano)))
+	return fires, contended, s.DB.Put("timers/_heartbeat", []byte(now.UTC().Format(time.RFC3339Nano)))
 }
 
 // Watchdog reports STALE when no tick happened for `grace`.

@@ -129,9 +129,9 @@ func (m *Manager) StartWithOptions(command string, args []string, workdir string
 		m.log(audit.Event{Type: "job_rejected", Command: command, Args: args, Workdir: cwd, Result: err.Error()})
 		return Snapshot{}, err
 	}
-	if m.cacheMaintenance {
+	if m.cacheMaintenance && (matchedExternal || !gitIndependentOfGoCache(command, args)) {
 		m.mu.Unlock()
-		return Snapshot{}, errors.New("Go cache maintenance in progress: retry later")
+		return Snapshot{}, goCacheRefusal()
 	}
 	active := m.starting
 	if opts.InteractiveOwner != "" {

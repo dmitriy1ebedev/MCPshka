@@ -36,9 +36,8 @@ func runnerRoute(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	action := strings.TrimPrefix(r.URL.Path, "/runner/")
-	if action == "agent.py" && r.Method == http.MethodGet {
-		w.Header().Set("Content-Type", "text/x-python; charset=utf-8")
-		_, _ = w.Write(runnerhub.Agent)
+	if platform, ok := strings.CutPrefix(action, "download/"); ok && r.Method == http.MethodGet {
+		runnerhub.Download(w, r, platform)
 		return
 	}
 	if action == "setup" && r.Method == http.MethodGet {

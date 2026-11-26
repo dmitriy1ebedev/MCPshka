@@ -13,11 +13,12 @@ const maxFindings = 12
 // contradicts itself. UNTRUSTED like the roadmap: it points at stale
 // acceptance evidence, it accepts nothing.
 type Analysis struct {
-	Phases     int `json:"phases"`
-	PhasesDone int `json:"phases_done"`
-	Checks     int `json:"checks"`
-	ChecksDone int `json:"checks_done"`
-	Percent    int `json:"percent"`
+	Phases           int `json:"phases"`
+	PhasesDone       int `json:"phases_done"`
+	Checks           int `json:"checks"`
+	ChecksSuperseded int `json:"checks_superseded,omitempty"`
+	ChecksDone       int `json:"checks_done"`
+	Percent          int `json:"percent"`
 	// Inconsistent: declared DONE with open items, every item done without a
 	// DONE mark, no acceptance items at all, a status table that disagrees
 	// with the sections. At most 12; More counts the rest.
@@ -52,14 +53,19 @@ func analyze(snap Snapshot, content string) Analysis {
 		byID[p.ID] = p
 		a.Checks += p.Total
 		a.ChecksDone += p.Completed
+		a.ChecksSuperseded += p.Superseded
 		if p.DeclaredDone {
 			a.PhasesDone++
 		}
-		switch open := p.Total - p.Completed; {
+		switch open := p.Total - p.Completed - p.Superseded; {
 		case p.DeclaredDone && open > 0:
 			note("%s: declared DONE with %d open items", p.ID, open)
 		case !p.DeclaredDone && p.Total > 0 && open == 0:
-			note("%s: all %d items done but the phase is not marked DONE (acceptance missing)", p.ID, p.Total)
+			if p.Superseded > 0 {
+				note("%s: no open items (%d superseded); the phase is not marked DONE", p.ID, p.Superseded)
+			} else {
+				note("%s: all %d items done but the phase is not marked DONE (acceptance missing)", p.ID, p.Total)
+			}
 		case !p.DeclaredDone && !p.Deferred && p.Total == 0:
 			note("%s: no acceptance items", p.ID)
 		}
@@ -75,7 +81,7 @@ func analyze(snap Snapshot, content string) Analysis {
 		p, ok := byID[m[1]]
 		done, _ := strconv.Atoi(m[2])
 		open, _ := strconv.Atoi(m[3])
-		if ok && (done != p.Completed || open != p.Total-p.Completed) {
+		if ok && (done != p.Completed || open != p.Total-p.Completed-p.Superseded) {
 			note("%s: status table says %d done / %d open, the section has %d / %d", p.ID, done, open, p.Completed, p.Total-p.Completed)
 		}
 	}

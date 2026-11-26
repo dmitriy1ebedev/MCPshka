@@ -78,13 +78,17 @@ func (b *boundedOutput) Write(p []byte) (int, error) {
 	return b.buf.Write(p)
 }
 func runGit(ctx context.Context, dir string, auth string, args ...string) (string, error) {
+	return runGitWithAuth(ctx, dir, "http.extraHeader", auth, args...)
+}
+
+func runGitWithAuth(ctx context.Context, dir, authKey, auth string, args ...string) (string, error) {
 	child, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(child, "/usr/bin/git", append([]string{"-c", "core.hooksPath=/dev/null", "-c", "credential.helper="}, args...)...)
 	cmd.Dir = dir
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "HOME=/nonexistent", "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
 	if auth != "" {
-		cmd.Env = append(cmd.Env, "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=http.extraHeader", "GIT_CONFIG_VALUE_0="+auth)
+		cmd.Env = append(cmd.Env, "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0="+authKey, "GIT_CONFIG_VALUE_0="+auth)
 	}
 	var out boundedOutput
 	out.max = 2 << 20

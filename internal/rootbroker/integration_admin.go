@@ -98,8 +98,6 @@ func integrationAdminServiceArgs(args []string) (string, []string, error) {
 	unit := "mcpshka-integration-admin-" + shaHex(raw)[:32]
 	worker := []string{executorHelper, "integration-admin-worker", args[0]}
 	binds := "/root/repos"
-	// Only CI preparation talks to the network: HTTPS to the GitHub API with
-	// the root-only token bound read-only. Module preparation stays offline.
 	network := []string{"--property=PrivateNetwork=yes", "--property=RestrictAddressFamilies=AF_UNIX"}
 	switch args[0] {
 	case "integration-test-prepare", "release-build-prepare":
@@ -118,17 +116,18 @@ func integrationAdminServiceArgs(args []string) (string, []string, error) {
 		network = []string{"--property=PrivateNetwork=no", "--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6"}
 		worker = append(worker, args[3], args[4], prepareAttempt(args))
 	case "integration-approve":
+		item, _ := decodeIntegrationItem(args[5])
+		if integrationqueue.IsGitHubImport(item.Request.ID) {
+			binds += " " + cievidence.TokenPath
+			network = []string{"--property=PrivateNetwork=no", "--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6"}
+		}
 		worker = append(worker, args[2], args[3], args[4], args[5])
 	}
-	// Preparation copies the module and its dependencies and may outlast the
-	// broker's 30s request budget, so it starts without waiting; callers
-	// observe the derived permit. Approval is small and stays synchronous.
 	mode := []string{"--wait", "--pipe"}
 	if preparesEvidence(args[0]) {
 		mode = []string{"--no-block"}
 	}
 	base := []string{"--unit=" + unit, "--quiet"}
-	// Retain failed preparation units so polling can report their result.
 	if !preparesEvidence(args[0]) {
 		base = append(base, "--collect")
 	}
@@ -325,9 +324,10 @@ func RunIntegrationAdminWorker(args []string) ([]byte, error) {
 	return nil, executor.Hold(failure.PolicyDenied, "ADMIN_ACTION_UNSUPPORTED", "rootbroker.RunIntegrationAdminWorker", "integration worker action unsupported", nil)
 }
 
-// integrationReviewDigest proves the approval covers the exact live branch and
-// target, and binds the reviewed change set: target..candidate diff bytes.
 func integrationReviewDigest(ctx context.Context, r integrationqueue.Request) (string, error) {
+	if err := integrationqueue.VerifyGitHubImportApproval(ctx, r); err != nil {
+		return "", err
+	}
 	var budget time.Duration
 	if deadline, ok := ctx.Deadline(); ok {
 		budget = max(time.Duration(0), time.Until(deadline))

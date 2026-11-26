@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -75,10 +78,11 @@ func (g *Gateway) models(ctx context.Context, c Config, key string) ([]Model, er
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.loadHealth()
 	for i, m := range list {
 		if h, ok := g.health[c.BaseURL+"\n"+m.ID]; ok {
 			m.State, m.CheckedAt, m.LastError = h.State, h.CheckedAt, h.LastError
-			if time.Since(h.CheckedAt) >= time.Duration(c.HealthCacheMinutes)*time.Minute {
+			if time.Since(h.CheckedAt) >= healthTTL(c, h) {
 				m.State = "unknown"
 			}
 		}
@@ -91,11 +95,62 @@ func (g *Gateway) mark(c Config, id string, err error) {
 	m := Model{ID: id, State: "alive", CheckedAt: time.Now().UTC()}
 	if err != nil {
 		m.State, m.LastError = "dead", err.Error()
+		if len(m.LastError) > 400 {
+			m.LastError = m.LastError[:400]
+		}
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.loadHealth()
+	g.health[c.BaseURL+"\n"+id] = m
+	g.saveHealth()
+}
+
+// removedTTL: a model the router reports as not found or removed stays
+// skipped for a day, not the few minutes a 503 or a timeout earns.
+const removedTTL = 24 * time.Hour
+
+var removed = regexp.MustCompile(`(?i)model_not_found|not found or removed|model unavailable|does not exist`)
+
+func healthTTL(c Config, h Model) time.Duration {
+	if h.State == "dead" && removed.MatchString(h.LastError) {
+		return removedTTL
+	}
+	return time.Duration(c.HealthCacheMinutes) * time.Minute
+}
+
+// loadHealth reads the shared probe cache once per process (g.mu held).
+func (g *Gateway) loadHealth() {
 	if g.health == nil {
 		g.health = map[string]Model{}
 	}
-	g.health[c.BaseURL+"\n"+id] = m
+	if g.healthRead || g.HealthPath == "" {
+		return
+	}
+	g.healthRead = true
+	if raw, err := os.ReadFile(g.HealthPath); err == nil {
+		var saved map[string]Model
+		if json.Unmarshal(raw, &saved) == nil {
+			for k, v := range saved {
+				if _, ok := g.health[k]; !ok && time.Since(v.CheckedAt) < removedTTL {
+					g.health[k] = v
+				}
+			}
+		}
+	}
+}
+
+// saveHealth writes the cache atomically; a failure only costs re-probes.
+func (g *Gateway) saveHealth() {
+	if g.HealthPath == "" {
+		return
+	}
+	raw, err := json.Marshal(g.health)
+	if err != nil || os.MkdirAll(filepath.Dir(g.HealthPath), 0o750) != nil {
+		return
+	}
+	tmp := g.HealthPath + ".tmp"
+	if os.WriteFile(tmp, raw, 0o600) == nil {
+		_ = os.Rename(tmp, g.HealthPath)
+	}
 }

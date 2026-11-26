@@ -165,9 +165,6 @@ func TestRunnerPlanRefusesFreeForm(t *testing.T) {
 	if err != nil || strings.Join(j.Argv, " ") != "go vet ./..." || j.Timeout != 3*3600 {
 		t.Fatalf("plan: %+v %v", j, err)
 	}
-	if len(Agent) < 1000 || !strings.Contains(string(Agent), "/runner/") {
-		t.Fatal("agent script not embedded")
-	}
 }
 
 func TestNeedsMetRequiresEveryCap(t *testing.T) {

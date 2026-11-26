@@ -12,12 +12,32 @@ import (
 	"time"
 
 	"mcpshka/internal/audit"
+	"mcpshka/internal/failure"
 	"mcpshka/internal/policy"
 )
 
 var goCacheEntry = regexp.MustCompile(`^[0-9a-f]{64}-[ad]$`)
 
-// The cache is shared across projects, so maintenance excludes all native jobs.
+func gitIndependentOfGoCache(command string, args []string) bool {
+	if len(args) == 0 || (command != "git" && command != "/usr/bin/git" && command != "/bin/git") {
+		return false
+	}
+	switch args[0] {
+	case "clone", "status", "log", "rev-parse", "ls-files", "ls-tree", "describe":
+		return true
+	}
+	return false
+}
+
+func goCacheRefusal() error {
+	err := failure.RejectedAs(failure.Transient, failure.GoCacheMaintenance, "jobs.admission", "Go cache maintenance in progress: retry later with a new idempotency key", nil)
+	err.RetryAfterSeconds = 30
+	err.NextSafeAction = failure.Action{Tool: "health_snapshot", Arguments: map[string]any{}}
+	return err
+}
+
+// The shared cache may be used by arbitrary native jobs. Start maintenance
+// only while idle and admit only known independent Git operations during it.
 func (m *Manager) maintainGoCache(ctx context.Context) (result error) {
 	m.mu.Lock()
 	if m.closing || m.cacheMaintenance || m.starting != 0 {

@@ -9,7 +9,13 @@ on:
       filter:
         branches: ["main"]
 
+
 workflows:
+  distributed:
+    settings:
+      max_cube_duration: 50m
+    tasks:
+      - distributed-shard
   test:
     settings:
       max_cube_duration: 50m
@@ -37,3 +43,20 @@ tasks:
             chown -R ci:ci .
             runuser -u ci -- env -i PATH="$gobin:/usr/bin:/bin" HOME=/home/ci LANG=C.UTF-8 GOTOOLCHAIN=local GOFLAGS=-mod=readonly go vet ./...
             runuser -u ci -- env -i PATH="$gobin:/usr/bin:/bin" HOME=/home/ci LANG=C.UTF-8 GOTOOLCHAIN=local GOFLAGS=-mod=readonly /usr/bin/tini -s -g -- go test -p 2 -count=1 ./...
+
+  - name: distributed-shard
+    cubes:
+      - name: shard
+        image: cr.yandex/mirror/golang:1.23.5-bullseye
+        env:
+          GOTOOLCHAIN: go1.26.0
+        script:
+          - export GITHUB_WORKSPACE="$PWD"
+          - sh packaging/ci/release_shard.sh prepare
+          - python3 -m venv /tmp/mcpshka-ci-python
+          - /tmp/mcpshka-ci-python/bin/pip install --disable-pip-version-check -r packaging/native/requirements-cloud.txt
+          - runuser -u ci -- env -i PATH="/tmp/mcpshka-ci-python/bin:$PATH" HOME=/home/ci GOTOOLCHAIN=go1.26.0 go mod download
+          - runuser -u ci -- env -i PATH="/tmp/mcpshka-ci-python/bin:$PATH" HOME=/home/ci GOTOOLCHAIN=go1.26.0 SOURCECRAFT_COMMIT_REF="$SOURCECRAFT_COMMIT_REF" go run ./cmd/ci-shard sourcecraft
+        artifacts:
+          paths:
+            - report.json

@@ -8,7 +8,7 @@ import (
 )
 
 func SessionTool(name string) bool {
-	return strings.HasPrefix(name, "proc_") || strings.HasPrefix(name, "search_")
+	return name == "phase_checkpoint_supersede" || strings.HasPrefix(name, "proc_") || strings.HasPrefix(name, "search_")
 }
 
 type mutationContract struct {
@@ -48,6 +48,7 @@ func replayable(c mutationContract) mutationContract {
 var Contracts = map[string]mutationContract{
 	"lane":                              contract("lane_status", "lane", "idempotency_key"),
 	"phase_checkpoint_record":           contract("phase_gate", "phase_gate", "idempotency_key"),
+	"phase_checkpoint_supersede":        replayable(contract("phase_gate", "phase_gate", "idempotency_key")),
 	"project_release":                   contract("project_release_status", "project_release_status", "idempotency_key"),
 	"roadmap_close":                     contract("roadmap_next", "roadmap_next", "idempotency_key"),
 	"issue_create":                      contract("issue_list", "issue_list", "idempotency_key"),
@@ -98,6 +99,7 @@ var Contracts = map[string]mutationContract{
 	"integration_recover":               contract("integration_recovery_status", "integration_recovery_status", "idempotency_key"),
 	"integration_test_prepare":          contract("state_status", "state_status", "idempotency_key"),
 	"integration_approve":               contract("integration_status", "integration_status", "idempotency_key"),
+	"integration_import_github_main":    replayable(contract("integration_status", "integration_status", "idempotency_key")),
 	"integration_publish_main":          replayable(contract("integration_recovery_status", "integration_recovery_status", "idempotency_key")),
 	"project_work_yield":                contract("project_lease_status", "project_work_yield_status", "idempotency_key"),
 	"artifact_upload_begin":             contract("artifact_upload_status", "artifact_upload_cancel", "idempotency_key"),
@@ -105,6 +107,7 @@ var Contracts = map[string]mutationContract{
 	"artifact_upload_finish":            contract("artifact_upload_status", "artifact_upload_status", "idempotency_key"),
 	"artifact_upload_cancel":            contract("artifact_upload_status", "artifact_upload_status", "idempotency_key"),
 	"knowledge_write":                   contract("knowledge_health", "knowledge_health", "idempotency_key"),
+	"memory_archive":                    replayable(contract("memory_archive_status", "memory_archive", "idempotency_key")),
 	"memory_write":                      contract("state_status", "state_status", "idempotency_key"),
 	"search_reindex":                    contract("index_health", "index_health", "idempotency_key"),
 	"diag_investigation_start":          contract("diag_investigation_status", "diag_investigation_cancel", "idempotency_key"),
@@ -133,6 +136,7 @@ var Contracts = map[string]mutationContract{
 	"fixes_review":                      contract("git_status", "fixes_review", "idempotency_key"),
 	"runner_task":                       contract("runner_status", "runner_status", "idempotency_key"),
 	"job_cancel":                        contract("job_status", "job_cancel", "job_id"),
+	"autonomy_baseline_save":            Replay("autonomy_baseline_save"),
 	"job_artifact_gc_apply":             contract("job_artifact_gc_preview", "job_artifact_gc_preview", "idempotency_key"),
 	"opencore_publish":                  contract("state_status", "opencore_preview", "idempotency_key"),
 	"fs_patch":                          contract("fs_read", "fs_patch", "idempotency_key"),

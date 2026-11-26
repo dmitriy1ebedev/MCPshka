@@ -45,10 +45,15 @@ type Error struct {
 	// NoEffect: refused before any side effect (input validation, a
 	// precondition checked first). The mutation layer releases the retry
 	// key, so the caller may correct the input and reuse it (BUG-20261103-5).
-	NoEffect     bool   `json:"no_effect,omitempty"`
-	BudgetMillis *int64 `json:"budget_ms,omitempty"`
-	Deadline     string `json:"deadline,omitempty"`
-	cause        error
+	EffectApplied     bool   `json:"effect_applied,omitempty"`
+	TaskID            string `json:"task_id,omitempty"`
+	JobID             string `json:"job_id,omitempty"`
+	RetryAfterSeconds int    `json:"retry_after_seconds,omitempty"`
+	Receipt           any    `json:"receipt,omitempty"`
+	NoEffect          bool   `json:"no_effect,omitempty"`
+	BudgetMillis      *int64 `json:"budget_ms,omitempty"`
+	Deadline          string `json:"deadline,omitempty"`
+	cause             error
 }
 
 func (e *Error) Error() string {
@@ -77,10 +82,10 @@ func DefaultAction(class Class) Action {
 		a.Tool = "health_snapshot"
 	case FencedUnknown:
 		a.Tool = "mutation_contracts"
-	case Deadline:
-		goal = "inspect deadline budget before retry"
-	case Transient:
-		goal = "inspect interrupted operation before retry"
+	// Goals are exact tool names, so tool_resolve answers with that one
+	// schema (exact_name) instead of a vague search (0.19.4).
+	case Deadline, Transient:
+		goal = "idempotency_status" // read the key's receipt, then retry with the same key
 	case OwnerBusy:
 		goal = "project_lease_status"
 	case PolicyDenied:
@@ -88,7 +93,7 @@ func DefaultAction(class Class) Action {
 	case ApprovalRequired:
 		goal = "approval status"
 	case FailedVerified:
-		goal = "inspect verified failure"
+		goal = "interaction_recovery_diagnose"
 	case EvidenceMissing:
 		goal = "integration_test_prepare"
 	}

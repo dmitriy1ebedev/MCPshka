@@ -19,6 +19,7 @@ type taskLeaseFixture struct {
 	id, path                        string
 	held                            bool
 	acquires, releases, beats       int
+	transientBeats                  int // first beats that fail without proving the lease lost
 	acquireErr, releaseErr, beatErr error
 }
 
@@ -38,6 +39,10 @@ func (l *taskLeaseFixture) Heartbeat(_ context.Context, path, token, key string)
 	l.beats++
 	if path != l.path || token != "borrowed-private-token" || !l.held {
 		l.t.Fatal("wrong heartbeat holder")
+	}
+	if l.transientBeats > 0 {
+		l.transientBeats--
+		return errors.New("broker busy")
 	}
 	return l.beatErr
 }
@@ -169,6 +174,37 @@ func TestTaskLeaseHeartbeatStopsAndNeverReleasesUnverifiedAttempt(t *testing.T) 
 			})
 		})
 	}
+}
+
+// MCP-288: 26.11 two Codex tasks died 90 s in on one missed heartbeat while
+// H96 had 113 MB free; transient misses must not end a live attempt.
+func TestTaskLeaseSurvivesTransientHeartbeatMisses(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		oldDir, oldQueue, oldGone := taskDir, taskHeavyQueue, attemptGone
+		t.Cleanup(func() { taskDir, taskHeavyQueue, attemptGone = oldDir, oldQueue, oldGone })
+		attemptGone = func(context.Context, string) (bool, error) { return true, nil }
+		taskDir = t.TempDir()
+		taskHeavyQueue = heavyqueue.Queue{Dir: t.TempDir(), Poll: time.Millisecond, Ready: func() (bool, string) { return true, "" }}
+		const id = "0123456789abcdee"
+		path := t.TempDir()
+		if err := os.WriteFile(filepath.Join(taskDir, id+".prompt"), []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		lease := &taskLeaseFixture{t: t, id: id, path: path, transientBeats: heartbeatMisses - 1}
+		got, err := RunTask(context.Background(), id, Codex, path, func(ctx context.Context, agent, dir, prompt, report string) (string, error) {
+			return RunWithTaskLease(ctx, agent, dir, prompt, report, lease, func(attempt context.Context, _, _, _, _ string) (string, error) {
+				select {
+				case <-attempt.Done():
+					return "", attempt.Err()
+				case <-time.After(time.Duration(heartbeatMisses+2) * time.Minute):
+					return "verified exit", nil
+				}
+			})
+		})
+		if err != nil || got.State != "done" || lease.releases != 1 {
+			t.Fatal(got, err, lease.beats, lease.releases)
+		}
+	})
 }
 
 func TestTaskLeaseReleasedBeforeQuotaWaitAndSuccessor(t *testing.T) {

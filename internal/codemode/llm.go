@@ -13,6 +13,7 @@ import (
 
 func bindLLM(ctx context.Context, vm *goja.Runtime, gateway *llmgateway.Gateway, out *Result, maxCalls int, async ...func(context.Context, func(context.Context) (any, error)) (any, error)) {
 	llm := vm.NewObject()
+	var accepted []any
 	call := func(name string, run func() (any, error)) goja.Value {
 		if len(out.Calls) >= maxCalls {
 			panic(vm.NewGoError(errors.New("LIMIT: too many LLM calls")))
@@ -28,12 +29,21 @@ func bindLLM(ctx context.Context, vm *goja.Runtime, gateway *llmgateway.Gateway,
 		}
 		out.Calls = append(out.Calls, c)
 		if err != nil {
-			panic(vm.NewGoError(err))
+			exception := vm.NewGoError(err)
+			if len(accepted) > 0 {
+				receipt := map[string]any{"accepted": accepted, "next": "job_wait, then job_output"}
+				out.Result = receipt
+				_ = exception.Set("receipt", vm.ToValue(receipt))
+			}
+			panic(exception)
 		}
 		// JSON names, rather than Go field names, are the public JS contract.
 		raw, _ := json.Marshal(result)
 		var value any
 		_ = json.Unmarshal(raw, &value)
+		if len(async) > 0 && async[0] != nil {
+			accepted = append(accepted, value)
+		}
 		return vm.ToValue(value)
 	}
 	ask := func(question string, data goja.Value, opts map[string]any, compare bool) goja.Value {

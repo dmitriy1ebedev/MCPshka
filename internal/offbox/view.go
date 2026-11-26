@@ -48,6 +48,24 @@ func (v View) Read(id, stream string, cursor int64, limit int) (jobs.Output, err
 	return jobs.ReadText(id, stream, text, cursor, limit, snapshot(j).State), nil
 }
 
+// Cancel implements jobs.ForeignCanceller: job_cancel on an rj- id stops the
+// runner job and, after a fallback, the H96 job that took it over.
+func (v View) Cancel(id string) (jobs.Snapshot, error) {
+	j, err := v.Hub.Cancel(id)
+	if err != nil {
+		return jobs.Snapshot{}, jobs.ErrNotFound
+	}
+	if j.Fallback != "" && v.Local != nil {
+		if c, ok := v.Local.(interface {
+			Cancel(string) (jobs.Snapshot, error)
+		}); ok {
+			return c.Cancel(j.Fallback)
+		}
+		return v.Local.Get(j.Fallback)
+	}
+	return snapshot(j), nil
+}
+
 func snapshot(j runnerhub.Job) jobs.Snapshot {
 	s := jobs.Snapshot{ID: j.ID, Command: "go", Args: j.Argv, Workdir: j.Workdir, StartedAt: j.Created, FinishedAt: j.Finished, TimeoutSeconds: int64(j.Timeout), Error: j.Error}
 	if s.Workdir == "" {
@@ -74,6 +92,9 @@ func snapshot(j runnerhub.Job) jobs.Snapshot {
 		s.State = jobs.Done
 		if j.State == runnerhub.Failed || j.ExitCode != 0 {
 			s.State = jobs.Failed
+		}
+		if j.State == runnerhub.Failed && strings.HasPrefix(j.Error, runnerhub.CancelledPrefix) {
+			s.State = jobs.Cancelled
 		}
 		code := j.ExitCode
 		s.ExitCode = &code

@@ -8,9 +8,19 @@ import (
 	"time"
 
 	"mcpshka/internal/llmgateway"
+	"mcpshka/internal/runoutcome"
 )
 
 const llmOutputLimit = 1 << 20
+
+var (
+	errNativeJobRunning  = errors.New("BUSY: LLM job already running")
+	errNativeJobStarting = errors.New("BUSY: LLM job starting")
+)
+
+func IsNativeJobBusy(err error) bool {
+	return errors.Is(err, errNativeJobRunning) || errors.Is(err, errNativeJobStarting)
+}
 
 // StartLLM keeps prompts in memory and returns a normal, bounded job receipt.
 // Only the gateway callback may run here; this is not an interpreter launcher.
@@ -44,13 +54,13 @@ func (m *Manager) startNative(parent context.Context, command string, seconds in
 	for _, j := range m.jobs {
 		if j.Command == command && !isTerminal(j.State) {
 			m.mu.Unlock()
-			return Snapshot{}, errors.New("BUSY: LLM job already running")
+			return Snapshot{}, errNativeJobRunning
 		}
 	}
 	// Reserve capacity across receipt creation as well.
 	if m.llmStarting {
 		m.mu.Unlock()
-		return Snapshot{}, errors.New("BUSY: LLM job starting")
+		return Snapshot{}, errNativeJobStarting
 	}
 	m.llmStarting = true
 	m.mu.Unlock()
@@ -108,6 +118,21 @@ func (m *Manager) startNative(parent context.Context, command string, seconds in
 		defer m.mu.Unlock()
 		j.State = Done
 		code := 0
+		if reported, ok := value.(interface{ Outcome() runoutcome.Result }); ok {
+			outcome := reported.Outcome()
+			switch outcome.State {
+			case "idle":
+				j.State = Idle
+			case "no_effect":
+				j.State = NoEffect
+				j.Error = outcome.Blocker
+				code = 1
+			case "partial":
+				j.State = Partial
+				j.Error = outcome.Blocker
+				code = 1
+			}
+		}
 		if err != nil {
 			j.State = Failed
 			code = 1

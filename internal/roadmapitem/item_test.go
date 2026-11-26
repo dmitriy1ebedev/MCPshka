@@ -131,10 +131,11 @@ func TestCloseAcceptedRefusesUnacceptedItemsWithoutEffect(t *testing.T) {
 	if err := os.WriteFile(p, []byte(lane), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if o, _ := NextFile("/r", p, 60); !strings.Contains(o.Warning, "60 коммитов") || o.Roadmap != p {
+	if o, _ := NextFile("/r", p, 60, ""); !strings.Contains(o.Warning, "60 коммитов") || o.Roadmap != p {
 		t.Fatalf("warning: %q", o.Warning)
 	}
 }
+
 // MCP-278: the 0.19.0 acceptance recorded checkpoints for items of the S5
 // stream (S5.13, K2.1…), but roadmap_close only saw "## P" phases.
 const streams = "# R\n\n## S5 — Каталог\n\n- [ ] первый\n- [ ] S5.3 явный\n- [x] второй по счёту\n\n### S5.CM — Code Mode\n\n- [ ] третий\n- [ ] K2.1 память\n\n## P0 — База\n\n- [ ] пункт фазы\n"
@@ -157,5 +158,42 @@ func TestStreamItemsAreClosable(t *testing.T) {
 	}
 	if o, err := Next(streams); err != nil || o.Phase != "P0" {
 		t.Fatalf("next must stay on the P phase: %+v %v", o, err)
+	}
+	if o, err := NextPhase(streams, "S5"); err != nil || o.Phase != "S5" || o.Item == nil || o.Item.ID != "S5.1" {
+		t.Fatalf("explicit stream: %+v %v", o, err)
+	}
+}
+
+func TestMixedRoadmapStreamIDs(t *testing.T) {
+	const raw = `## S4 — Unified Storage Fabric — облачные хранилища, backup, restore и переносимость
+- [x] S4.1 storage
+
+## MT — Мультиаккаунт: люди, их устройства, их Face ID (решение владельца 18.11)
+- [x] **MT1. Аккаунты.**
+
+## C1 — Облачные агенты Codex Cloud и Claude Code (решение владельца 24.10)
+
+## C2 — Взаимозаменяемые CI-площадки (решение владельца 24.10)
+
+## S5 — Tool Capability Registry — полный каталог, индекс, ревизия и автоматический bootstrap ChatGPT
+- [x] (0.19.2 25.11, knowledge:m-5684ad315011) S5.FAST.7 opencore_publish
+- [ ] **S5.FAST.8. Следующий пункт.** Exit: проверяемый эффект
+
+## P0 — Reality Baseline & Lab (v1: 0)
+- [x] done
+`
+	phases := Parse(raw)
+	for i, id := range []string{"S4", "MT", "C1", "C2", "S5", "P0"} {
+		if len(phases) != 6 || phases[i].ID != id {
+			t.Fatalf("unexpected sections: %+v", phases)
+		}
+	}
+	o, err := Next(raw)
+	if err != nil || o.Phase != "S5" || o.Item == nil || o.Item.ID != "S5.FAST.8" {
+		t.Fatalf("next = %+v, %v", o, err)
+	}
+	_, closed, already, err := Close(raw, []string{"S5.FAST.7", "S5.FAST.8"}, "26.11.2026", "")
+	if err != nil || len(closed) != 1 || len(already) != 1 {
+		t.Fatalf("close = %v, already = %v, err = %v", closed, already, err)
 	}
 }

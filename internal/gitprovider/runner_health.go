@@ -7,14 +7,18 @@ import (
 
 // GitVerse may expose workflows while all execution capacity is unavailable.
 // Cancellation is platform evidence, never proof of an exhausted quota.
-func (c *Client) gitverseRunnerHealth(ctx context.Context) error {
+func (c *Client) gitverseRunnerHealth(ctx context.Context, routes ...string) error {
 	var report struct {
 		Runs         []ciRun `json:"runs"`
 		WorkflowRuns []ciRun `json:"workflow_runs"`
 	}
 	// A sample of the newest runs: the list always has more pages once the
 	// repository has run CI ten times, which the evidence reader rejects.
-	if err := c.ciFirstPage(ctx, c.ciRoute()+"/actions/runs?per_page=10", &report); err != nil {
+	route := c.ciRoute()
+	if len(routes) > 0 {
+		route = routes[0]
+	}
+	if err := c.ciFirstPage(ctx, route+"/actions/runs?per_page=10", &report); err != nil {
 		return err
 	}
 	runs := report.Runs

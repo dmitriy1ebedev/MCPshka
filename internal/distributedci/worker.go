@@ -90,12 +90,20 @@ func infraOutput(s string) bool {
 
 // Worker recomputes the package inventory and plan inside the snapshot. External
 // jobs also verify Git identity; the module worker relies on its sealed manifest.
-func Worker(ctx context.Context, dir string, n int, site, commit, tree, snapshot, hash string, id int64) (Observation, error) {
+func Worker(ctx context.Context, dir string, n int, site, commit, tree, snapshot, hash string, id int64, moduleDigest ...string) (Observation, error) {
 	started := time.Now()
+	digest := ""
+	if len(moduleDigest) != 0 {
+		digest = moduleDigest[0]
+	}
 	if site != "module" {
 		c, t, s, e := identity(ctx, dir)
 		if e != nil || c != commit || t != tree || s != snapshot {
 			return Observation{}, errors.New("CI checkout identity mismatch")
+		}
+		digest, e = checkoutDigest(ctx, dir)
+		if e != nil {
+			return Observation{}, e
 		}
 	}
 	packages, counts, weights, e := inventory(ctx, dir)
@@ -103,6 +111,7 @@ func Worker(ctx context.Context, dir string, n int, site, commit, tree, snapshot
 		return Observation{}, e
 	}
 	p, e := NewPlan(commit, tree, snapshot, packages, weights, counts, len(Sites))
+	p.Digest = digest
 	if e != nil || p.Hash() != hash || n < 0 || n >= len(p.Shards) {
 		return Observation{}, errors.New("CI shard plan mismatch")
 	}
@@ -143,29 +152,40 @@ func SourceCraftStarted(ctx context.Context, dir, ref string) (Observation, erro
 	return sourceCraftWorker(ctx, dir, ref, true)
 }
 func sourceCraftWorker(ctx context.Context, dir, ref string, started bool) (Observation, error) {
+	return PushWorker(ctx, dir, ref, "sourcecraft", 1, started)
+}
+
+// PushWorker derives shard and plan identity from its immutable branch.
+func PushWorker(ctx context.Context, dir, ref, site string, id int64, started bool) (Observation, error) {
 	c, t, s, e := identity(ctx, dir)
 	if e != nil {
 		return Observation{}, e
 	}
-	prefix := "mcpshka-distributed/" + c + "/shard-"
-	ref = strings.TrimPrefix(ref, "refs/heads/")
-	if !strings.HasPrefix(ref, prefix) {
-		return Observation{}, errors.New("invalid shard ref")
-	}
-	n, e := strconv.Atoi(strings.TrimPrefix(ref, prefix))
+	digest, e := checkoutDigest(ctx, dir)
 	if e != nil {
 		return Observation{}, e
+	}
+	p := Plan{Commit: c, Digest: digest}
+	ref = strings.TrimPrefix(ref, "refs/heads/")
+	branch, shard, ok := strings.Cut(ref, "/shard-")
+	if !ok || !ValidShardIndex(shard) || digest == "" && site != "sourcecraft" {
+		return Observation{}, errors.New("invalid shard ref")
+	}
+	n, _ := strconv.Atoi(shard)
+	if ref != ShardRef(p, n) || branch == "" {
+		return Observation{}, errors.New("invalid shard ref")
 	}
 	packages, counts, weights, e := inventory(ctx, dir)
 	if e != nil {
 		return Observation{}, e
 	}
-	p, e := NewPlan(c, t, s, packages, weights, counts, len(Sites))
-	if e != nil || n < 0 || n >= len(p.Shards) {
-		return Observation{}, errors.New("invalid shard")
+	p, e = NewPlan(c, t, s, packages, weights, counts, len(Sites))
+	p.Digest = digest
+	if e != nil {
+		return Observation{}, e
 	}
 	if started {
-		return Observation{Provider: "sourcecraft", Shard: n, Commit: c, Tree: t, Snapshot: s, PlanHash: p.Hash(), Packages: p.Shards[n], State: "RUNNING", RunID: 1}, nil
+		return Observation{Provider: site, Shard: n, Commit: c, Tree: t, Snapshot: s, PlanHash: p.Hash(), Packages: p.Shards[n], State: "RUNNING", RunID: id}, nil
 	}
-	return Worker(ctx, dir, n, "sourcecraft", c, t, s, p.Hash(), 1)
+	return Worker(ctx, dir, n, site, c, t, s, p.Hash(), id)
 }

@@ -3,10 +3,13 @@
 workflow:
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH =~ /^ci\/[0-9a-f]{12}\/shard-[0-3]$/'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - when: never
 
 test:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_PIPELINE_SOURCE == "merge_request_event"'
   image: golang:1.26.0-trixie
   # MosHub shared runners reject untagged jobs.
   tags: [appsechub]
@@ -28,3 +31,12 @@ test:
       gobin="$(dirname "$(command -v go)")"
       runuser -u ci -- env -i PATH="$gobin:/usr/bin:/bin" HOME=/home/ci LANG=C GOTOOLCHAIN="${GOTOOLCHAIN:-auto}" GOFLAGS=-mod=readonly go vet ./...
       runuser -u ci -- env -i PATH="$gobin:/usr/bin:/bin" HOME=/home/ci LANG=C GOTOOLCHAIN="${GOTOOLCHAIN:-auto}" GOFLAGS=-mod=readonly /usr/bin/tini -s -g -- go test -p 2 -count=1 ./...
+
+distributed-shard:
+  image: golang:1.26.0-trixie
+  tags: [appsechub]
+  timeout: 50m
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^ci\/[0-9a-f]{12}\/shard-[0-3]$/'
+  script:
+    - CI_PUBLIC_REF="$CI_COMMIT_BRANCH" CI_RUN_ID="$CI_PIPELINE_ID" sh packaging/ci/distributed_shard.sh moshub

@@ -16,22 +16,23 @@ import (
 // fakeConveyor plays the integration tools: every call is recorded, and the
 // sealed test and the worker advance only when the test moves them on.
 type fakeConveyor struct {
-	t         *testing.T
-	calls     []string
-	keys      map[string]int
-	enqueued  bool
-	prepared  int // polls until SEALED
-	exec      string
-	launched  bool
-	result    string // "" running, else SUCCEEDED/FAILED
-	fenced    bool
-	approved  bool
-	worker    bool
-	testState string
-	unitAlive bool
-	recorded  bool // worker stored its effect and waits for fence
-	released  bool
-	published bool
+	t          *testing.T
+	calls      []string
+	keys       map[string]int
+	enqueued   bool
+	prepared   int // polls until SEALED
+	exec       string
+	launched   bool
+	result     string // "" running, else SUCCEEDED/FAILED
+	fenced     bool
+	approved   bool
+	worker     bool
+	testState  string
+	unitAlive  bool
+	recorded   bool // worker stored its effect and waits for fence
+	released   bool
+	published  bool
+	integrated bool
 }
 
 func (f *fakeConveyor) registry() *toolRegistry {
@@ -52,6 +53,9 @@ func (f *fakeConveyor) registry() *toolRegistry {
 		state := "pending"
 		if f.published {
 			state = "published"
+		}
+		if f.integrated {
+			state = "integrated"
 		}
 		return map[string]any{"found": true, "item": map[string]any{"state": state, "request": map[string]any{"commit": shipTestCommit}}}
 	})
@@ -335,7 +339,7 @@ func TestIntegrationShipLongStepSurvivesClientAndReportsProgress(t *testing.T) {
 		}
 		select {
 		case <-release:
-			return nil, map[string]any{"found": true, "item": map[string]any{"state": "published"}}, nil
+			return nil, map[string]any{"found": true, "item": map[string]any{"state": "published", "request": map[string]any{"commit": shipTestCommit}}}, nil
 		case <-ctx.Done():
 			return nil, nil, ctx.Err()
 		}
@@ -374,7 +378,7 @@ func TestIntegrationShipReplyBudgetAndIdentityIsolation(t *testing.T) {
 		callers <- identity.ID
 		select {
 		case <-release:
-			return nil, map[string]any{"found": true, "item": map[string]any{"state": "published"}}, nil
+			return nil, map[string]any{"found": true, "item": map[string]any{"state": "published", "request": map[string]any{"commit": shipTestCommit}}}, nil
 		case <-ctx.Done():
 			return nil, nil, ctx.Err()
 		}
@@ -455,4 +459,20 @@ func TestIntegrationShipDrivesCIItself(t *testing.T) {
 	}
 	ci = `{"state": "observed_pass", "runs": [{"id": 7}]}`
 	step("TEST_PREPARING")
+}
+
+func TestIntegrationShipContinuesIntegratedCustomIDWithSealedPermit(t *testing.T) {
+	f := &fakeConveyor{t: t, keys: map[string]int{}, enqueued: true, integrated: true, prepared: 5, launched: true, fenced: true, result: "SUCCEEDED"}
+	r := f.registry()
+	now := time.Now()
+	env := shipTestEnv(f, &now)
+	in := IntegrationShipInput{Path: "/root/repos/demo", Branch: "feature", ID: "ship-0196-01234567", Commit: shipTestCommit, AdminSessionID: strings.Repeat("a", 32)}
+	if out, err := r.shipStep(context.Background(), env, in); err == nil || out.Done {
+		t.Fatalf("moved HEAD reported done: %+v %v", out, err)
+	}
+	env.Head = func(context.Context, string, string) (string, error) { return in.Commit, nil }
+	out, err := r.shipStep(context.Background(), env, in)
+	if err != nil || out.Stage != "PUBLISHED" || !out.Done || out.PermitID != strings.Repeat("1", 32) || f.worker {
+		t.Fatalf("existing item not resumed: %+v %v", out, err)
+	}
 }

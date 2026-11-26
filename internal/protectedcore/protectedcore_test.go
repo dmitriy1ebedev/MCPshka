@@ -97,7 +97,7 @@ func TestProtectedPathClassification(t *testing.T) {
 		"packaging/native/migrate-service-user.sh",
 		"packaging/native/migrate-auth-registry.py",
 		"packaging/native/codex-bridge.py",
-		"packaging/native/diag-traffic-route-observe.py",
+		"internal/rootbroker/diagtraffic/worker.go",
 		"internal/protectedcore/protectedcore.go",
 	} {
 		if !SourcePathProtected(path) {

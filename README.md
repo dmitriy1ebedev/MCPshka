@@ -1,6 +1,7 @@
 <h1 align="center">MCPshka</h1>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/version-0.19.4-brightgreen" alt="version 0.19.4">
   <a href="https://github.com/dmitriy1ebedev/MCPshka/actions/workflows/open-core.yml"><img src="https://github.com/dmitriy1ebedev/MCPshka/actions/workflows/open-core.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/go-1.26-00ADD8?logo=go" alt="Go 1.26">
   <img src="https://img.shields.io/badge/platform-linux%20arm64%20%7C%20amd64-lightgrey" alt="Linux arm64 | amd64">

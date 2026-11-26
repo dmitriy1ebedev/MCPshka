@@ -42,10 +42,8 @@ const (
 // moduleCacheSource is the fixed root cache; tests point it at a fixture.
 var moduleCacheSource = ModuleCacheRoot
 
-// The architecture checks run first: a monolith over its cap fails in
-// seconds instead of after the 40-minute suite (25.11, 0194). go's 10m
-// default timeout killed mcpserver on H96, hence 45m.
-var moduleTestCommand = []string{"/bin/sh", "-ec", "go test -count=1 ./internal/archlint\ngo test -p 1 -count=1 -timeout=45m ./..."}
+// Shared by the full and affected sealed paths. The marker survives fencing.
+var moduleTestCommand = []string{"/bin/sh", "-ec", "go test -count=1 ./internal/archlint || { echo " + distributedci.ArchlintFailed + "; exit 1; }\ngo test -p 1 -count=1 -timeout=45m ./..."}
 
 // The affected profile (ROADMAP S5.FAST.3) runs the integration gate over the
 // packages a merge touches. Root seals the list into the run environment;
@@ -94,7 +92,9 @@ func moduleTestPath(name string) bool {
 }
 
 func moduleTestCommandMatches(command []string) bool {
-	return strings.Join(command, "\x00") == strings.Join(moduleTestCommand, "\x00")
+	joined := strings.Join(command, "\x00")
+	return joined == strings.Join(moduleTestCommand, "\x00") ||
+		joined == "/bin/sh\x00-ec\x00go test -count=1 ./internal/archlint\ngo test -p 1 -count=1 -timeout=45m ./..."
 }
 
 // snapshotLimits keeps the historical single-package bounds unchanged.

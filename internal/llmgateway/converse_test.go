@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -76,5 +77,31 @@ func TestConfiguredRouterModelIsServed(t *testing.T) {
 	}
 	if _, err := g.Converse(context.Background(), "ask", []Message{{Role: "user", Content: "hi"}}, nil, "other-model"); err == nil {
 		t.Fatal("a model no endpoint lists or configures must be refused")
+	}
+}
+
+// 26.11: model=gpt-oss-120b got FreeLLM 429 for ~7 h. The gateway does not
+// switch to another helper on its own; the refusal names what else exists.
+func TestRefusalNamesOtherBrainWithoutSwitching(t *testing.T) {
+	gigaHits := 0
+	free := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"code":"rate_limit_exceeded"}}`, http.StatusTooManyRequests)
+	}))
+	defer free.Close()
+	giga := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" { // the catalog read is not a call
+			gigaHits++
+		}
+	}))
+	defer giga.Close()
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "llm.json")
+	raw, _ := json.Marshal(map[string]any{"base_url": free.URL + "/v1", "model": "gpt-oss-120b",
+		"fallback": []any{map[string]any{"base_url": giga.URL + "/v1", "model": "GigaChat-2", "dialect": "gigachat", "brain_model": "GigaChat-2-Max"}}})
+	os.WriteFile(cfg, raw, 0600)
+	g := &Gateway{ConfigPath: cfg, JournalPath: filepath.Join(dir, "j"), Secrets: func() []string { return nil }}
+	_, err := g.Converse(context.Background(), "brain", []Message{{Role: "user", Content: "hi"}}, nil, "gpt-oss-120b")
+	if err == nil || !strings.Contains(err.Error(), "GigaChat-2-Max") || gigaHits != 0 {
+		t.Fatal("refusal must name the other brain and not call it:", err, gigaHits)
 	}
 }

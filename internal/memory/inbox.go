@@ -19,11 +19,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
 	"mcpshka/internal/knowledge"
+	"mcpshka/internal/runoutcome"
 )
 
 const (
@@ -37,6 +37,7 @@ CREATE INDEX IF NOT EXISTS mem_inbox_state ON mem_inbox(state);`
 
 // InboxReport is the distillation coverage.
 type InboxReport struct {
+	runoutcome.Result
 	Files     int `json:"files,omitempty"`
 	Pending   int `json:"pending"`
 	Distilled int `json:"distilled"`
@@ -136,7 +137,6 @@ func (s *Store) InboxSplit(ctx context.Context, file string) (int, error) {
 	}
 	var b strings.Builder
 	b.WriteString("BEGIN IMMEDIATE;\n")
-	n := 0
 	base := filepath.Base(file)
 	for _, title := range order {
 		c := convs[title]
@@ -153,12 +153,15 @@ func (s *Store) InboxSplit(ctx context.Context, file string) (int, error) {
 				at = s.now()
 			}
 			b.WriteString("INSERT OR IGNORE INTO mem_inbox(id,file,title,text,at) VALUES(" + lit(id) + "," + lit(base) + "," + lit(t) + "," + lit(text) + "," + litTime(&at) + ");\n")
-			n++
 		}
 	}
-	b.WriteString("COMMIT;")
-	_, err = s.exec(ctx, b.String())
-	return n, err
+	b.WriteString("COMMIT;\nSELECT total_changes() AS added;")
+	rows, err := s.exec(ctx, b.String())
+	if err != nil {
+		return 0, err
+	}
+	n, _ := rows[0]["added"].(float64)
+	return int(n), nil
 }
 
 // InboxScan splits every export in dir/memory-inbox not split yet.
@@ -174,24 +177,41 @@ func (s *Store) InboxScan(ctx context.Context) (InboxReport, error) {
 	for _, r := range rows {
 		done[str(r, "file")] = true
 	}
-	files, _ := filepath.Glob(filepath.Join(filepath.Dir(s.file), inboxDir, "*"))
-	sort.Strings(files)
+	dir := filepath.Join(filepath.Dir(s.file), inboxDir)
+	files, err := os.ReadDir(dir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		r := runoutcome.Resolve(0, true, "inbox_directory_unreadable", "restore read access to the memory inbox directory")
+		return InboxReport{Result: r}, err
+	}
 	var errs []error
-	split := 0
-	for _, f := range files {
+	split, added := 0, 0
+	input := false
+	for _, file := range files {
+		f := file.Name()
 		ext := strings.ToLower(filepath.Ext(f))
-		if done[filepath.Base(f)] || (ext != ".json" && ext != ".zip") {
+		if file.IsDir() || done[f] || (ext != ".json" && ext != ".zip") {
 			continue
 		}
-		if _, err := s.InboxSplit(ctx, f); err != nil {
+		input = true
+		n, err := s.InboxSplit(ctx, filepath.Join(dir, f))
+		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
 		split++
+		added += n
 	}
 	rep, err := s.Inbox(ctx)
 	rep.Files = split
-	return rep, errors.Join(append(errs, err)...)
+	err = errors.Join(append(errs, err)...)
+	blocker, next := "", ""
+	if err != nil {
+		blocker, next = "inbox_export_unreadable_or_invalid", "inspect export read and parse errors before retrying"
+	} else if input && added == 0 {
+		blocker, next = "inbox_export_has_no_new_chunks", "check whether the export is empty or duplicates existing chunks"
+	}
+	rep.Result = runoutcome.Resolve(added, input, blocker, next)
+	return rep, err
 }
 
 // Inbox reports the coverage.

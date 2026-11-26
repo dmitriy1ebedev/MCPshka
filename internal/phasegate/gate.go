@@ -1,9 +1,11 @@
 package phasegate
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"mcpshka/internal/hosttriage"
 	"os"
@@ -43,13 +45,14 @@ type PhaseGateResult struct {
 	Verdict string `json:"verdict"` // PASS or BLOCKED
 	// Acceptance separates what PASS means: CODE_TEST_PASS (no phase asked),
 	// PHASE_ACCEPTED (phase checkpoint proven) or INCOMPLETE.
-	Acceptance string           `json:"acceptance"`
-	Root       string           `json:"root"`
-	Head       string           `json:"head,omitempty"`
-	Phase      string           `json:"phase,omitempty"`
-	Checks     []PhaseGateCheck `json:"checks"`
-	Blockers   []string         `json:"blockers,omitempty"`
-	NextAction string           `json:"next_action"`
+	Acceptance       string           `json:"acceptance"`
+	Root             string           `json:"root"`
+	Head             string           `json:"head,omitempty"`
+	Phase            string           `json:"phase,omitempty"`
+	Checks           []PhaseGateCheck `json:"checks"`
+	Blockers         []string         `json:"blockers,omitempty"`
+	NextAction       string           `json:"next_action"`
+	CheckpointSHA256 string           `json:"checkpoint_sha256,omitempty"`
 }
 
 // CheckpointStateRoot is the MCPshka state directory holding checkpoints.
@@ -77,11 +80,12 @@ func PassingGate(value string) bool {
 // status string; recorded ones carry evidence ("job:<id>", "knowledge:<id>")
 // and, for soak-like criteria, the minimum wall time that evidence must span.
 type CheckpointGate struct {
-	Status             string    `json:"status"`
-	Evidence           string    `json:"evidence,omitempty"`
-	MinDurationSeconds int64     `json:"min_duration_seconds,omitempty"`
-	Note               string    `json:"note,omitempty"`
-	RecordedAt         time.Time `json:"recorded_at,omitempty"`
+	Status             string        `json:"status"`
+	Evidence           string        `json:"evidence,omitempty"`
+	MinDurationSeconds int64         `json:"min_duration_seconds,omitempty"`
+	Note               string        `json:"note,omitempty"`
+	RecordedAt         time.Time     `json:"recorded_at,omitempty"`
+	Supersession       *Supersession `json:"supersession,omitempty"`
 	legacy             bool
 }
 
@@ -92,6 +96,14 @@ type CheckpointDoc struct {
 	ExpiresAt  time.Time                 `json:"expires_at,omitempty"`
 	RecordedAt time.Time                 `json:"recorded_at,omitempty"`
 	Gates      map[string]CheckpointGate `json:"gates"`
+}
+
+func (g CheckpointGate) MarshalJSON() ([]byte, error) {
+	if g.legacy {
+		return json.Marshal(g.Status)
+	}
+	type plain CheckpointGate
+	return json.Marshal(plain(g))
 }
 
 func (g *CheckpointGate) UnmarshalJSON(raw []byte) error {
@@ -114,28 +126,33 @@ func (g *CheckpointGate) UnmarshalJSON(raw []byte) error {
 	return nil
 }
 
-func readCheckpoint(root, phase string) (string, CheckpointDoc, error) {
+func readCheckpoint(root, phase string) (string, []byte, CheckpointDoc, error) {
 	for _, path := range CheckpointPaths(root, phase) {
-		raw, err := os.ReadFile(path)
+		f, err := os.Open(path)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return path, CheckpointDoc{}, err
+			return path, nil, CheckpointDoc{}, err
+		}
+		raw, err := io.ReadAll(io.LimitReader(f, (256<<10)+1))
+		f.Close()
+		if err != nil {
+			return path, nil, CheckpointDoc{}, err
 		}
 		if len(raw) > 256<<10 {
-			return path, CheckpointDoc{}, errors.New("checkpoint exceeds 256 KiB")
+			return path, nil, CheckpointDoc{}, errors.New("checkpoint exceeds 256 KiB")
 		}
 		var doc CheckpointDoc
 		if err := json.Unmarshal(raw, &doc); err != nil {
-			return path, CheckpointDoc{}, err
+			return path, nil, CheckpointDoc{}, err
 		}
 		if doc.Gates == nil {
 			doc.Gates = map[string]CheckpointGate{}
 		}
-		return path, doc, nil
+		return path, raw, doc, nil
 	}
-	return "", CheckpointDoc{}, os.ErrNotExist
+	return "", nil, CheckpointDoc{}, os.ErrNotExist
 }
 
 // gateEvidenceProblem checks that a PASS criterion's evidence really exists:
@@ -234,6 +251,11 @@ func Evaluate(git *gitops.Service, manager *jobs.Manager, in PhaseGateInput) (Ph
 			testsPassed, local = state == "PASS", &PhaseGateCheck{Name: "sealed_test", Status: state, Detail: detail}
 		}
 	}
+	if local.Status == "MISSING" {
+		// 26.11 go2rtc: a PASS of project_test with eight packages was taken
+		// for the full test; only the profile run seals the exact HEAD.
+		local.Detail += "; a targeted project_test (packages/run) never seals: run project_test path=" + st.Root + " without packages on the committed HEAD " + head[:12]
+	}
 	add(*local)
 	if pass, detail, ok := memory.Gate(manager.StateDir(), st.Root); ok { // 0.11.3 item 1
 		add(PhaseGateCheck{Name: "memory_exam", Status: map[bool]string{true: "PASS", false: "FAIL"}[pass], Detail: detail})
@@ -244,7 +266,7 @@ func Evaluate(git *gitops.Service, manager *jobs.Manager, in PhaseGateInput) (Ph
 	}
 
 	if in.Phase != "" {
-		add(phaseCheckpointCheck(git, manager, st, head, in.Phase, testsPassed))
+		add(phaseCheckpointCheck(git, manager, st, head, in.Phase, testsPassed, &out.CheckpointSHA256))
 	}
 	out.Verdict, out.NextAction = "PASS", "proceed: the phase gates hold for "+head[:12]
 	out.Acceptance = "CODE_TEST_PASS"
@@ -258,14 +280,15 @@ func Evaluate(git *gitops.Service, manager *jobs.Manager, in PhaseGateInput) (Ph
 	return out, nil
 }
 
-func phaseCheckpointCheck(git *gitops.Service, manager *jobs.Manager, st gitops.StatusResult, head, phase string, testsPassed bool) PhaseGateCheck {
-	path, doc, err := readCheckpoint(st.Root, phase)
+func phaseCheckpointCheck(git *gitops.Service, manager *jobs.Manager, st gitops.StatusResult, head, phase string, testsPassed bool, sha *string) PhaseGateCheck {
+	path, raw, doc, err := readCheckpoint(st.Root, phase)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		return PhaseGateCheck{Name: "checkpoint", Status: "MISSING", Detail: "no checkpoint for " + phase + ": a passing project test proves code, not this phase; record each acceptance criterion with phase_checkpoint_record (PASS cites job:<id> evidence)"}
 	case err != nil:
 		return PhaseGateCheck{Name: "checkpoint", Status: "FAIL", Detail: path + ": " + err.Error()}
 	}
+	*sha = fmt.Sprintf("%x", sha256.Sum256(raw))
 	if !doc.ExpiresAt.IsZero() && time.Now().After(doc.ExpiresAt) {
 		return PhaseGateCheck{Name: "checkpoint", Status: "FAIL", Detail: "checkpoint for " + phase + " expired " + doc.ExpiresAt.UTC().Format(time.RFC3339) + "; re-verify and record again"}
 	}
@@ -290,9 +313,13 @@ func phaseCheckpointCheck(git *gitops.Service, manager *jobs.Manager, st gitops.
 	}
 	names := slices.Sorted(maps.Keys(doc.Gates))
 	var open []string
-	legacy := 0
+	legacy, superseded := 0, 0
 	for _, k := range names {
 		g := doc.Gates[k]
+		if g.Status == "SUPERSEDED" && manager != nil && verifiedSupersession(manager.Database(), st.Root, phase, k, g.Supersession) {
+			superseded++
+			continue
+		}
 		if g.legacy {
 			legacy++
 		}
@@ -305,7 +332,7 @@ func phaseCheckpointCheck(git *gitops.Service, manager *jobs.Manager, st gitops.
 	if len(open) > 0 {
 		return PhaseGateCheck{Name: "checkpoint", Status: "FAIL", Detail: "open gates: " + strings.Join(open, ", ")}
 	}
-	detail := fmt.Sprintf("%d gates PASS/WAIVED in %s", len(names), path)
+	detail := fmt.Sprintf("%d gates PASS/WAIVED, %d SUPERSEDED in %s", len(names)-superseded, superseded, path)
 	if legacy > 0 {
 		detail += fmt.Sprintf(" (%d legacy without evidence)", legacy)
 	}

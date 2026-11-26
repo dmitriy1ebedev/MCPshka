@@ -18,8 +18,12 @@ import (
 	"mcpshka/internal/issues"
 	"mcpshka/internal/jobs"
 	"mcpshka/internal/releasequeue"
+	"mcpshka/internal/runoutcome"
 	"mcpshka/internal/selfheal"
+	"mcpshka/internal/statestore"
 	"mcpshka/internal/systemdsvc"
+	"mcpshka/internal/tools/autonomy"
+	"mcpshka/internal/workmetrics"
 )
 
 // ShipOnStart enables issue background checks only in the HTTP server.
@@ -82,12 +86,16 @@ func (svc *Service) StartSentinel(docker *dockerops.Service, services *systemdsv
 			}
 		}()
 		go svc.Store().Watch(15*time.Minute, probe, func(ids []string) { fmt.Fprintf(os.Stderr, "issue sentinel: filed %v\n", ids) })
-		go svc.nightLoop(probe)
+		var db *statestore.DB
+		if manager != nil {
+			db = manager.Database()
+		}
+		go svc.nightLoop(probe, db, autonomy.Sources(manager))
 	})
 }
 
 // nightLoop runs the night review (P29.N1) once per night on a quiet host.
-func (svc *Service) nightLoop(probe func() []issues.Finding) {
+func (svc *Service) nightLoop(probe func() []issues.Finding, db *statestore.DB, sources workmetrics.Sources) {
 	for {
 		time.Sleep(10 * time.Minute)
 		if svc.FixesNight != nil {
@@ -99,8 +107,16 @@ func (svc *Service) nightLoop(probe func() []issues.Finding) {
 		if !issues.NightDue(time.Now(), last, loadPerCPU()) {
 			continue
 		}
-		rep, err := svc.Store().NightReview(issues.NightInput{Now: time.Now(), Findings: probe(), Prod: svc.deps.Version, Agent: agentState})
-		fmt.Fprintf(os.Stderr, "issue night review: %d cards %v\n", len(rep.Cards), err)
+		findings := probe()
+		now := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		metrics := sources.Measure(ctx, workmetrics.Period{Since: now.Add(-24 * time.Hour), Until: now, StuckSeconds: int(workmetrics.StuckAfter / time.Second)}, now)
+		cancel()
+		rep, err := svc.Store().NightReview(issues.NightInput{Now: now, Findings: findings, Prod: svc.deps.Version, Agent: agentState, Autonomy: metrics.Brief()})
+		fmt.Fprintf(os.Stderr, "issue night review: %s, %d cards, %s: %v\n", rep.State, rep.Processed, rep.Blocker, err)
+		if err := runoutcome.Record(db, "issue-night", now.UTC().Format(time.RFC3339Nano), rep.Result, now); err != nil {
+			fmt.Fprintf(os.Stderr, "issue night outcome: %.200v\n", err)
+		}
 	}
 }
 

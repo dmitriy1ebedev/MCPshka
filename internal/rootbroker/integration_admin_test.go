@@ -231,3 +231,21 @@ func TestEarlierAttemptUnitsMatchLaunchedUnits(t *testing.T) {
 		t.Fatal("attempt 1 has no earlier units")
 	}
 }
+
+func TestGitHubImportApprovalEnablesPinnedProvenanceProbe(t *testing.T) {
+	var item integrationqueue.RuntimeItem
+	if err := json.Unmarshal([]byte(pendingItemJSON(t)), &item); err != nil {
+		t.Fatal(err)
+	}
+	item.Request.ID, item.Request.Branch = integrationqueue.GitHubImportPins(item.Request.Commit)
+	raw, err := json.Marshal(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"integration-approve", strings.Repeat("a", 32), item.Request.Owner, strings.Repeat("b", 32), strings.Repeat("c", 32), string(raw)}
+	_, cmd, err := integrationAdminServiceArgs(args)
+	joined := strings.Join(cmd, "\n")
+	if err != nil || !strings.Contains(joined, "PrivateNetwork=no") || !strings.Contains(joined, cievidence.TokenPath) {
+		t.Fatalf("GitHub import approval lacks bounded provenance probe: %v", err)
+	}
+}

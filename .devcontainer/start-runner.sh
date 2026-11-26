@@ -1,16 +1,22 @@
 #!/bin/sh
-# setup keeps the credential in the workspace across IDE sleeps.
 set -eu
-for root in /workspaces "$HOME/workspace" "$HOME"; do
-  if [ -f "$root/.mcpshka-runner/start" ]; then
-    exec sh "$root/.mcpshka-runner/start"
-  fi
-done
-conf=$HOME/.mcpshka-runner.json
 origin=${MCPSHKA_URL:-}
-if [ -z "$origin" ] && [ -f "$conf" ]; then
-  origin=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["url"])' "$conf")
+for root in /workspaces "$HOME/workspace" "$HOME"; do
+  dir=$root/.mcpshka-runner
+  if [ -z "$origin" ] && [ -f "$dir/origin" ]; then
+    origin=$(cat "$dir/origin")
+  fi
+  if [ -z "$origin" ] && [ -f "$dir/key.json" ]; then
+    # Migrate credentials written by the Python runner (one-line JSON).
+    origin=$(sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$dir/key.json")
+  fi
+  [ -z "$origin" ] || break
+done
+if [ -z "$origin" ] && [ -f "$HOME/.mcpshka-runner.json" ]; then
+  origin=$(sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$HOME/.mcpshka-runner.json")
 fi
 [ -n "$origin" ] || exit 0
-curl -fsSL "$origin/runner/agent.py" -o "$HOME/mcpshka-runner.py"
-nohup python3 "$HOME/mcpshka-runner.py" --url "$origin" > "$HOME/mcpshka-runner.log" 2>&1 &
+installer=$(mktemp)
+trap 'rm -f "$installer"' EXIT
+curl -fsSL --connect-timeout 10 --max-time 30 --retry 2 "${origin%/}/runner/setup" -o "$installer"
+sh "$installer" --start

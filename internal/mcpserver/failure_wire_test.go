@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"mcpshka/internal/authn"
 	"mcpshka/internal/failure"
 	"mcpshka/internal/filesystem"
 )
@@ -50,10 +51,39 @@ func TestLeaseNoEffectSurvivesBothActualMCPWireSurfaces(t *testing.T) {
 			if err != nil || json.Unmarshal(raw, &proof) != nil || proof.Schema != "mcpshka.failure/v1" || !proof.NoEffect || proof.Hold {
 				t.Fatal("typed refusal lost at wire", string(raw), err)
 			}
+			var envelope failure.Envelope
+			data, _ := json.Marshal(result.StructuredContent)
+			if err := json.Unmarshal(data, &envelope); err != nil || envelope.ErrorCode == "" || envelope.FailureLayer != "mcpshka" || envelope.ActualEffect != "none" || envelope.RetryAllowed || envelope.NextSafeAction.Tool == "" || len(envelope.RemainingWork) == 0 {
+				t.Fatalf("missing error envelope: %s (%v)", data, err)
+			}
+			if strings.Contains(string(data), held.Token) {
+				t.Fatal("structured error exposed holder token")
+			}
 			if strings.Contains(string(raw), held.Token) || strings.Contains(string(raw), held.Path) {
 				t.Fatal("wire metadata exposed private input")
 			}
 		})
+	}
+}
+
+func TestFailureEnvelopePreservesSchemaAndPolicyDenials(t *testing.T) {
+	c := catalogClient(t, &authn.Identity{ID: "reader", Role: "reader", Scopes: []string{"fs_read"}})
+	for _, tc := range []struct {
+		name, code, layer string
+		args              map[string]any
+	}{
+		{"fs_read", "INVALID_ARGUMENT", "client", map[string]any{"path": 42}},
+		{"exec_start", "POLICY_DENIED", "mcpshka", map[string]any{"command": "git", "args": []string{"status"}, "workdir": "/root/repos", "idempotency_key": "denied"}},
+	} {
+		res, err := c.CallTool(t.Context(), &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
+		if err != nil || !res.IsError {
+			t.Fatalf("%s: %+v %v", tc.name, res, err)
+		}
+		raw, _ := json.Marshal(res.StructuredContent)
+		var env failure.Envelope
+		if err := json.Unmarshal(raw, &env); err != nil || env.ErrorCode != tc.code || env.FailureLayer != tc.layer || env.ActualEffect != "none" {
+			t.Fatalf("%s: %s (%v)", tc.name, raw, err)
+		}
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -68,26 +69,9 @@ func (p Publish) Run(ctx context.Context) (json.RawMessage, error) {
 		return hold("invalid_input")
 	}
 	url := t.URL
-	header, extraEnv := "", []string(nil)
-	switch {
-	case t.Auth == "bearer" || strings.HasPrefix(t.Auth, "basic:"):
-		tok, err := readToken(t.TokenFile)
-		if err != nil {
-			return hold(err.Error())
-		}
-		header = "Authorization: Bearer " + tok
-		if user, ok := strings.CutPrefix(t.Auth, "basic:"); ok {
-			header = "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+tok))
-		}
-	case t.Auth == "ssh":
-		if _, err := readToken(t.KnownHosts); err != nil && err.Error() == "token_missing" {
-			return hold("known_hosts_missing")
-		}
-		extraEnv = []string{"GIT_SSH_COMMAND=ssh -F /dev/null -i " + t.Key + " -o IdentitiesOnly=yes -o BatchMode=yes" +
-			" -o UserKnownHostsFile=" + t.KnownHosts + " -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=rsa-sha2-512,rsa-sha2-256,ssh-ed25519 -o ConnectTimeout=8"}
-	case t.Auth == "none": // local fixtures only
-	default:
-		return hold("invalid_auth")
+	header, extraEnv, err := t.gitAuth()
+	if err != nil {
+		return hold(err.Error())
 	}
 	scratch, err := os.MkdirTemp("", "opencore-index-")
 	if err != nil {
@@ -180,18 +164,50 @@ func gitCommand(ctx context.Context, gitDir, header string, env, args []string) 
 	return cmd
 }
 
-func readToken(path string) (string, error) {
-	st, err := os.Stat(path)
+func readToken(path string, cleanup ...bool) (string, error) {
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return "", errors.New("token_missing")
 	}
-	if s, ok := st.Sys().(*syscall.Stat_t); !ok || int(s.Uid) != os.Geteuid() || st.Mode().Perm()&0o077 != 0 {
+	f := os.NewFile(uintptr(fd), path)
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return "", errors.New("token_invalid")
+	}
+	s, ok := st.Sys().(*syscall.Stat_t)
+	if !ok || !st.Mode().IsRegular() || st.Mode().Perm()&0o077 != 0 || int(s.Uid) != os.Geteuid() && !(len(cleanup) != 0 && cleanup[0] && os.Geteuid() == 0 && s.Uid == 994) {
 		return "", errors.New("token_permissions")
 	}
-	b, err := os.ReadFile(path)
+	b, err := io.ReadAll(io.LimitReader(f, 513))
 	v := strings.TrimSpace(string(b))
 	if err != nil || v == "" || len(v) > 512 || strings.ContainsAny(v, " \t\r\n") {
 		return "", errors.New("token_invalid")
 	}
 	return v, nil
+}
+
+func (t Target) gitAuth(cleanup ...bool) (string, []string, error) {
+	header, extraEnv := "", []string(nil)
+	switch {
+	case t.Auth == "bearer" || strings.HasPrefix(t.Auth, "basic:"):
+		tok, err := readToken(t.TokenFile, cleanup...)
+		if err != nil {
+			return "", nil, err
+		}
+		header = "Authorization: Bearer " + tok
+		if user, ok := strings.CutPrefix(t.Auth, "basic:"); ok {
+			header = "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+tok))
+		}
+	case t.Auth == "ssh":
+		if _, err := readToken(t.KnownHosts); err != nil && err.Error() == "token_missing" {
+			return "", nil, errors.New("known_hosts_missing")
+		}
+		extraEnv = []string{"GIT_SSH_COMMAND=ssh -F /dev/null -i " + t.Key + " -o IdentitiesOnly=yes -o BatchMode=yes" +
+			" -o UserKnownHostsFile=" + t.KnownHosts + " -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=rsa-sha2-512,rsa-sha2-256,ssh-ed25519 -o ConnectTimeout=8"}
+	case t.Auth == "none": // local fixtures only
+	default:
+		return "", nil, errors.New("invalid_auth")
+	}
+	return header, extraEnv, nil
 }

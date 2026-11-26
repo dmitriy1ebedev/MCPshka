@@ -16,6 +16,8 @@ import (
 	"mcpshka/internal/issues"
 	"mcpshka/internal/memory"
 	"mcpshka/internal/runnerhub"
+	"mcpshka/internal/runoutcome"
+	"mcpshka/internal/statestore"
 )
 
 // memoryCommand runs the memory CLI (state dir: MCPSHKA_STATE_DIR, default
@@ -159,10 +161,34 @@ func memoryCommand(ctx context.Context, name string, args []string) {
 		err = st.SetQuestions(ctx, sets)
 		out = map[string]int{"sources": len(sets)}
 	}
+	var outcome runoutcome.Result
+	switch r := out.(type) {
+	case memory.SyncReport:
+		outcome = r.Result
+	case memory.InboxReport:
+		outcome = r.Result
+	case memory.ConsolidateReport:
+		outcome = r.Result
+	case memory.ImportReport:
+		outcome = r.Result
+	}
+	if outcome.State != "" {
+		if db, dbErr := statestore.Active(filepath.Dir(dir)); dbErr == nil && db != nil {
+			now := time.Now()
+			if recErr := runoutcome.Record(db, name, now.UTC().Format(time.RFC3339Nano), outcome, now); recErr != nil {
+				log.Printf("record run outcome: %v", recErr)
+			}
+		} else if dbErr != nil {
+			log.Printf("open run outcome state: %v", dbErr)
+		}
+		_ = json.NewEncoder(os.Stdout).Encode(out)
+	}
 	if err != nil {
 		log.Fatal(err)
 	}
-	_ = json.NewEncoder(os.Stdout).Encode(out)
+	if outcome.State == "" {
+		_ = json.NewEncoder(os.Stdout).Encode(out)
+	}
 }
 
 // fetchNavec downloads the pinned navec pack next to the memory; BuildVectors

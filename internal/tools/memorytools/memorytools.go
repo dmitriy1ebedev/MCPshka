@@ -9,6 +9,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcpshka/internal/memory"
+	"mcpshka/internal/statestore"
 	"mcpshka/internal/tooldef"
 )
 
@@ -17,7 +18,8 @@ var nightRunning atomic.Bool
 // Register installs memory_write and memory_recall over the store in
 // stateDir; night starts the nightly consolidation once per process;
 // requireAdmin admits optimize only under the owner's Face ID window.
-func Register(add func(tooldef.Def), stateDir string, night func(), requireAdmin func(context.Context, string) error) {
+func Register(add func(tooldef.Def), stateDir string, night func(), requireAdmin func(context.Context, string) error, db *statestore.DB) {
+	registerArchive(add, stateDir, db)
 	open := func() (*memory.Store, error) { return memory.Open(stateDir) }
 	if night != nil && nightRunning.CompareAndSwap(false, true) {
 		go night()

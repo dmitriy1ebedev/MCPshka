@@ -30,6 +30,7 @@ type IntegrationPublishResult struct {
 // follows it. Publication needs root's RELEASED claim for the exact approval,
 // an idle project with no writer lease, and a pure fast-forward.
 func (svc Service) RegisterPublish(add func(tooldef.Def), m *jobs.Manager, guard func(string, string) error, queue *integrationqueue.Runtime) {
+	svc.registerGitHubImport(add, m, guard, queue)
 	closed := false
 	add(tooldef.New(&mcp.Tool{Name: "integration_publish_main", Description: "After root records an integration RELEASED in the protected store, fast-forward the working checkout of the target branch (e.g. /root/repos/mcpshka main) to that exact candidate. Requires an idle project, no writer lease and a clean checkout at the admitted target head; repeating after success is a no-op. Never merges, rebases or deploys.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, OpenWorldHint: &closed}}, func(ctx context.Context, _ *mcp.CallToolRequest, in IntegrationPublishInput) (*mcp.CallToolResult, IntegrationPublishResult, error) {
 		if strings.TrimSpace(in.IdempotencyKey) == "" {

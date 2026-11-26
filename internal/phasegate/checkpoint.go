@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"mcpshka/internal/failure"
@@ -44,6 +45,8 @@ type PhaseCheckpointOutput struct {
 	Next      string            `json:"next"`
 }
 
+var checkpointWrite sync.Mutex
+
 var criterionName = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,63}$`)
 
 // ValidateShape runs before a mutation receipt is allocated.
@@ -74,6 +77,8 @@ func ValidateShape(in PhaseCheckpointInput) error {
 }
 
 func Record(git *gitops.Service, manager *jobs.Manager, in PhaseCheckpointInput, now time.Time) (PhaseCheckpointOutput, error) {
+	checkpointWrite.Lock()
+	defer checkpointWrite.Unlock()
 	if err := ValidateShape(in); err != nil {
 		return PhaseCheckpointOutput{}, err
 	}
@@ -85,7 +90,7 @@ func Record(git *gitops.Service, manager *jobs.Manager, in PhaseCheckpointInput,
 	if err != nil {
 		return PhaseCheckpointOutput{}, err
 	}
-	_, doc, err := readCheckpoint(root, in.Phase)
+	_, _, doc, err := readCheckpoint(root, in.Phase)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return PhaseCheckpointOutput{}, err
 	}
@@ -93,6 +98,9 @@ func Record(git *gitops.Service, manager *jobs.Manager, in PhaseCheckpointInput,
 		doc.Gates = map[string]CheckpointGate{}
 	}
 	for _, c := range in.Criteria {
+		if doc.Gates[c.Name].Supersession != nil {
+			return PhaseCheckpointOutput{}, supersedeRefusal("criterion "+c.Name+" is superseded; use its successor", nil)
+		}
 		status := strings.ToUpper(strings.TrimSpace(c.Status))
 		g := CheckpointGate{Status: status, Evidence: strings.TrimSpace(c.Evidence), MinDurationSeconds: c.MinDurationSeconds, Note: c.Note, RecordedAt: now}
 		if status == "PASS" {
@@ -108,22 +116,7 @@ func Record(git *gitops.Service, manager *jobs.Manager, in PhaseCheckpointInput,
 		doc.ExpiresAt = now.Add(time.Duration(in.ValidForHours) * time.Hour)
 	}
 	path := CheckpointPaths(root, in.Phase)[0]
-	raw, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		return PhaseCheckpointOutput{}, err
-	}
-	if len(raw) > 256<<10 {
-		return PhaseCheckpointOutput{}, errors.New("checkpoint would exceed 256 KiB")
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return PhaseCheckpointOutput{}, err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0600); err != nil {
-		return PhaseCheckpointOutput{}, err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	if err := saveCheckpoint(path, doc); err != nil {
 		return PhaseCheckpointOutput{}, err
 	}
 	out := PhaseCheckpointOutput{Path: path, Head: head, Gates: map[string]string{}, Next: "phase_gate path=" + root + " phase=" + in.Phase}
@@ -134,4 +127,26 @@ func Record(git *gitops.Service, manager *jobs.Manager, in PhaseCheckpointInput,
 		out.ExpiresAt = doc.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 	return out, nil
+}
+
+func saveCheckpoint(path string, doc CheckpointDoc) error {
+	raw, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	if len(raw) > 256<<10 {
+		return errors.New("checkpoint would exceed 256 KiB")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }

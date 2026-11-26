@@ -100,7 +100,7 @@ func registerReleaseApplyTools(r *toolRegistry, db *statestore.DB) {
 		if in.Action != "" {
 			identity, _ := authn.IdentityFromContext(ctx)
 			q, err := runIdempotent(r.store, in.IdempotencyKey, "release_queue", in, func() (releasequeue.View, error) {
-				return releasequeue.Mutate(db, identity, releasequeue.Input{Action: in.Action, Version: in.Version, Branch: in.Branch, Commit: in.Commit, StoreID: in.StoreID, ShipItem: in.ShipItem, Evidence: in.Evidence}, time.Now().UTC())
+				return releasequeue.Mutate(db, identity, releasequeue.Input{Action: in.Action, Version: in.Version, Branch: in.Branch, Commit: in.Commit, StoreID: in.StoreID, ShipItem: in.ShipItem, Evidence: in.Evidence, IdempotencyKey: in.IdempotencyKey}, time.Now().UTC())
 			})
 			return nil, ReleaseApplyOutput{Version: in.Version, Commit: q.Commit, State: q.Stage, Queue: &q}, err
 		}

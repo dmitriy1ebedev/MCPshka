@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"mcpshka/internal/authn"
+	"mcpshka/internal/integrationqueue"
 )
 
 type shipRunKey struct{}
@@ -50,8 +51,8 @@ func (r *toolRegistry) ship(ctx context.Context, env shipEnv, in IntegrationShip
 	case <-ctx.Done():
 	}
 	item := in.ID
-	if item == "" && len(in.Commit) >= 12 {
-		item = "ship-" + in.Commit[:12]
+	if item == "" {
+		item = integrationqueue.DefaultShipID(in.Commit)
 	}
 	step, _ := run.step.Load().(string)
 	return IntegrationShipResult{Stage: "SHIP_RUNNING", Commit: in.Commit, ItemID: item, Detail: step + " is running in the background", NextAction: "call integration_ship again with the same arguments to observe progress"}, nil

@@ -189,7 +189,7 @@ func TestModuleProfileRunsWholeModuleOfflineWithDiskScratch(t *testing.T) {
 		}
 	}
 	args := strings.Join(workerArgs("p", spec), " ")
-	for _, want := range []string{"--ro-bind-fd 3 /workspace", "--bind-fd 4 /scratch", "GOMODCACHE /workspace/.gomodcache", "GOCACHE /scratch/go-cache", "TMPDIR /scratch", "GOPROXY off", "GOMAXPROCS 2", "--unshare-all", "--cap-drop ALL", "-- /bin/sh -ec go test -count=1 ./internal/archlint\ngo test -p 1 -count=1 -timeout=45m ./..."} {
+	for _, want := range []string{"--ro-bind-fd 3 /workspace", "--bind-fd 4 /scratch", "GOMODCACHE /workspace/.gomodcache", "GOCACHE /scratch/go-cache", "TMPDIR /scratch", "GOPROXY off", "GOMAXPROCS 2", "--unshare-all", "--cap-drop ALL", "-- /bin/sh -ec " + moduleTestCommand[2]} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("module sandbox missing %q in %s", want, args)
 		}

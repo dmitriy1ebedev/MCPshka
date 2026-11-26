@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"mcpshka/internal/executor"
 	"mcpshka/internal/failure"
+	"mcpshka/internal/gitprovider"
 	"mcpshka/internal/heavyqueue"
 	"mcpshka/internal/releaseapply"
 	"os"
@@ -29,7 +30,7 @@ func Run(ctx context.Context, report func(error)) {
 		args := []string{"--unit=mcpshka-host-cleanup", "--collect", "--no-block", "--quiet",
 			"--property=Type=exec", "--property=User=root", "--property=Group=mcpshka", "--property=UMask=0007",
 			"--property=RuntimeMaxSec=90s", "--property=MemoryMax=256M", "--property=CPUQuota=25%", "--property=TasksMax=16",
-			"--property=Nice=19", "--property=IOSchedulingClass=idle", "--property=PrivateNetwork=yes",
+			"--property=Nice=19", "--property=IOSchedulingClass=idle", "--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
 			"--property=NoNewPrivileges=yes", "--property=ProtectSystem=strict", "--property=PrivateTmp=yes",
 			"--property=ReadWritePaths=/root /var/lib/mcpshka /var/lib/mcpshka-executor /run/mcpshka-self-deploy.lock",
 			Helper, "host-cleanup-worker"}
@@ -50,7 +51,11 @@ func RunWorker() ([]byte, error) {
 	defer cancel()
 	return runHostCleanupPass(ctx, executor.UpdateHostStorage, func() bool { ready, _ := heavyqueue.HostReady(); return ready },
 		func(ctx context.Context) (executor.ReleaseCleanupPlan, error) {
-			return executor.MaintainReleaseStorage(ctx, true)
+			plan, err := executor.MaintainReleaseStorage(ctx, true)
+			if ctx.Err() == nil {
+				err = errors.Join(err, gitprovider.PruneDistributedRefs(ctx, time.Now()))
+			}
+			return plan, err
 		},
 		func(raw []byte) error {
 			return releaseapply.WriteRootFile(executor.AuthorityRoot+"/cleanup-last-plan.json", raw, 0600)

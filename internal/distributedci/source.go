@@ -91,6 +91,14 @@ func git(ctx context.Context, repo string, args ...string) (string, error) {
 
 // SnapshotSHA matches the existing parentless GitVerse snapshot protocol.
 func SnapshotSHA(commit, tree, raw string) (string, error) {
+	body, err := SnapshotBody(commit, tree, raw, "")
+	if err != nil {
+		return "", err
+	}
+	return snapshotSHA(body), nil
+}
+
+func SnapshotBody(commit, tree, raw, digest string) (string, error) {
 	var author, committer string
 	for _, line := range strings.Split(strings.SplitN(raw, "\n\n", 2)[0], "\n") {
 		fields := strings.Fields(line)
@@ -110,8 +118,18 @@ func SnapshotSHA(commit, tree, raw string) (string, error) {
 	}
 	const who = "MCPshka Snapshot <snapshot@mcpshka.local> "
 	body := "tree " + tree + "\nauthor " + who + author + "\ncommitter " + who + committer + "\n\nMCPshka immutable snapshot\n\nSource-Commit: " + commit + "\nSource-Tree: " + tree + "\n"
+	if digest != "" {
+		if !digestRE.MatchString(digest) {
+			return "", errors.New("invalid export digest")
+		}
+		body += "Export-Digest: " + digest + "\n"
+	}
+	return body, nil
+}
+
+func snapshotSHA(body string) string {
 	h := sha1.Sum([]byte("commit " + strconv.Itoa(len(body)) + "\x00" + body))
-	return hex.EncodeToString(h[:]), nil
+	return hex.EncodeToString(h[:])
 }
 func inventory(ctx context.Context, dir string) ([]string, map[string]int, map[string]float64, error) {
 	raw, e := command(ctx, dir, "go", "list", "./...")
@@ -191,6 +209,14 @@ func LoadPlan(ctx context.Context, repo, commit string) (Plan, error) {
 	return NewPlan(commit, tree, snap, packages, weights, counts, len(Sites))
 }
 func Ref(p Plan) string { return "mcpshka-distributed/" + p.Commit }
+
+func ShardRef(p Plan, n int) string {
+	prefix := Ref(p)
+	if p.Digest != "" {
+		prefix = "ci/" + p.Commit[:12]
+	}
+	return prefix + "/shard-" + strconv.Itoa(n)
+}
 func identity(ctx context.Context, dir string) (string, string, string, error) {
 	head, e := git(ctx, dir, "rev-parse", "HEAD")
 	if e != nil {
@@ -228,10 +254,11 @@ func identity(ctx context.Context, dir string) (string, string, string, error) {
 // caller removes it.
 func materialize(ctx context.Context, repo, commit string) (string, error) {
 	var fs syscall.Statfs_t
-	if syscall.Statfs(os.TempDir(), &fs) != nil || fs.Bavail*uint64(fs.Bsize) < max(uint64(3<<30), fs.Blocks*uint64(fs.Bsize)/10)+(64<<20) {
+	scratchRoot := os.TempDir() // sealed sandboxes have no writable /var/tmp
+	if syscall.Statfs(scratchRoot, &fs) != nil || fs.Bavail*uint64(fs.Bsize) < max(uint64(3<<30), fs.Blocks*uint64(fs.Bsize)/10)+(64<<20) {
 		return "", errors.New("temporary disk reserve unavailable")
 	}
-	dir, e := os.MkdirTemp("", "mcpshka-shard-")
+	dir, e := os.MkdirTemp(scratchRoot, "mcpshka-shard-")
 	if e != nil {
 		return "", e
 	}
@@ -297,6 +324,20 @@ func materialize(ctx context.Context, repo, commit string) (string, error) {
 		}
 		if ce != nil {
 			return "", ce
+		}
+	}
+	if os.Geteuid() == 0 {
+		e = filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if err := os.Chown(path, 994, 994); err != nil {
+				return err
+			}
+			return nil
+		})
+		if e != nil {
+			return "", e
 		}
 	}
 	keep = true

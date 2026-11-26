@@ -47,3 +47,18 @@ func TestObserveStalePreviewRespectsParentAndFailure(t *testing.T) {
 		t.Fatalf("failed probe accepted: %+v, err = %v", ev, err)
 	}
 }
+
+func TestMemoryArchiveProbesExactRunAfterMutation(t *testing.T) {
+	in := map[string]any{"source": "codex", "claim_key": "private-claim"}
+	for _, field := range []string{"run", "receipt"} {
+		out := map[string]any{field: map[string]any{"run_id": "archive-1"}}
+		before, args, err := ProbeArguments("memory_archive", "memory_archive_status", in, nil, true)
+		if err != nil || before != "state_status" || len(args) != 0 {
+			t.Fatal(before, args, err)
+		}
+		after, args, err := ProbeArguments("memory_archive", "memory_archive_status", in, out, false)
+		if err != nil || after != "memory_archive_status" || len(args) != 2 || args["source"] != "codex" || args["run_id"] != "archive-1" {
+			t.Fatal(after, args, err)
+		}
+	}
+}

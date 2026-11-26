@@ -434,6 +434,33 @@ func (h *Hub) Result(runnerID, jobID string, exit int, output, errText string) e
 	})
 }
 
+// CancelledPrefix starts the Error of a job stopped by job_cancel.
+const CancelledPrefix = "cancelled by job_cancel"
+
+// Cancel stops a queued, leased or given-up job (MCP-292): it becomes
+// FAILED with CancelledPrefix, the runner is released and its next
+// heartbeat says stop. A finished job is returned unchanged.
+func (h *Hub) Cancel(id string) (Job, error) {
+	var out Job
+	err := h.update(func(s *state) error {
+		j := find(s, id)
+		if j == nil {
+			return fmt.Errorf("runner job %s not found", id)
+		}
+		switch j.State {
+		case Queued, Leased, NoRunner:
+			if j.State == Leased && j.Runner != "" {
+				h.releaseRunner(s, j.Runner)
+			}
+			j.State, j.Error, j.Finished = Failed, CancelledPrefix, h.Now()
+			_ = os.Remove(h.BundlePath(j.ID))
+		}
+		out = *j
+		return nil
+	})
+	return out, err
+}
+
 func find(s *state, id string) *Job {
 	for i := range s.Jobs {
 		if s.Jobs[i].ID == id {

@@ -41,7 +41,16 @@ func JobInput(provider, mode, commit, idempotencyKey, leaseToken, path string) (
 	if provider == "gitverse" && mode == "publish" {
 		timeout = PublishTimeout + 30*time.Second
 	}
-	if provider == "gigaide" && mode == "runner" || provider == "distributed" && mode == "publish" {
+	if provider == "distributed" && mode == "publish" {
+		// Export, audit and package inventory are local CPU work even when
+		// every test shard runs off-host. Admit this job through the heavy queue.
+		return []string{Sub, provider, mode, commit}, jobs.StartOptions{
+			Env: runnerJobEnv(mode), HolderToken: leaseToken, Timeout: 10 * time.Minute,
+			OutputLimitBytes: 32768, MemoryLimitBytes: 1 << 30, CPUTimeLimit: 6 * time.Minute,
+			CPUQuotaPercent: 100, ProcessLimit: 512, PrivateTemp: true, LowPriority: true,
+		}, nil
+	}
+	if provider == "gigaide" && mode == "runner" {
 		return []string{Sub, provider, mode, commit}, jobs.StartOptions{
 			Env: runnerJobEnv(mode), HolderToken: leaseToken, Timeout: timeout,
 			OutputLimitBytes: 32768, MemoryLimitBytes: 1 << 30, CPUTimeLimit: 120 * time.Second,

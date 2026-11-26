@@ -29,6 +29,28 @@ func TestPreparedCircuitRollbackRetriesSameKey(t *testing.T) {
 	}
 }
 
+// 26.11: a parallel agent_task met the broker's mutation lock; the
+// prepared worktree must be rolled back and the same key retried.
+func TestPreparedMutationLockBusyRollsBack(t *testing.T) {
+	s := idempotency.New(t.TempDir())
+	calls, clean := 0, 0
+	run := func() (map[string]any, error) {
+		return dispatchPrepared(func() (map[string]any, error) {
+			calls++
+			if calls == 1 {
+				return nil, errors.New("[OWNER_BUSY] configuration mutation busy: HOLD")
+			}
+			return map[string]any{"id": "task"}, nil
+		}, func() error { clean++; return nil })
+	}
+	if _, err := idempotency.Run(s, "k", "agent_task", "input", run); !failure.IsNoEffect(err) {
+		t.Fatal(err)
+	}
+	if out, err := idempotency.Run(s, "k", "agent_task", "input", run); err != nil || out["id"] != "task" || clean != 1 {
+		t.Fatal(out, err, clean)
+	}
+}
+
 func TestPreparedUnknownAndFailedRollbackStayFenced(t *testing.T) {
 	for _, err := range []error{errors.New("lost reply"), brokerclient.ErrBusy} {
 		_, got := dispatchPrepared(func() (map[string]any, error) { return nil, err }, func() error {

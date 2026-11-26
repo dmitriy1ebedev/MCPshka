@@ -3,12 +3,15 @@ package releasequeue
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"mcpshka/internal/authn"
+	"mcpshka/internal/failure"
+	"mcpshka/internal/integrationqueue"
 	"mcpshka/internal/statestore"
 )
 
@@ -23,7 +26,13 @@ func TestQueueContinuesManualShip(t *testing.T) {
 	}
 	owner := authn.Identity{ID: "chat-owner", Source: "oauth", Role: "operator"}
 	commit := strings.Repeat("a", 40)
-	in := Input{Version: "0.16.5", Branch: "agent/x", Commit: commit, StoreID: strings.Repeat("b", 32), ShipItem: "ship-" + commit[:12] + "-gh", Evidence: "ci"}
+	in := Input{Version: "0.16.5", Branch: "agent/x", Commit: commit, StoreID: strings.Repeat("b", 32), ShipItem: "ship-0196-aaaaaaaa", Evidence: "ci"}
+	lookup := func(_ context.Context, _, id, candidate string) (integrationqueue.Request, string, error) {
+		if id == in.ShipItem && candidate == in.Commit {
+			return integrationqueue.Request{ID: id, Commit: commit, Branch: in.Branch}, "", nil
+		}
+		return integrationqueue.Request{}, in.ShipItem, nil
+	}
 	for _, bad := range []Input{{ShipItem: "ship-" + strings.Repeat("c", 12)}, {ShipItem: "ship-" + commit[:12] + "-../x"}, {Evidence: "magic"}} {
 		b := in
 		if bad.ShipItem != "" {
@@ -32,11 +41,16 @@ func TestQueueContinuesManualShip(t *testing.T) {
 		if bad.Evidence != "" {
 			b.Evidence = bad.Evidence
 		}
-		if _, err := Mutate(db, owner, b, time.Now()); err == nil {
+		if _, err := mutate(context.Background(), db, owner, b, time.Now(), lookup); err == nil {
 			t.Fatalf("refused input accepted: %+v", bad)
+		} else if bad.ShipItem != "" {
+			var refused *failure.Error
+			if !errors.As(err, &refused) || refused.NextSafeAction.Tool != "release_apply" || refused.NextSafeAction.Arguments["ship_item"] != in.ShipItem {
+				t.Fatalf("missing correction: %v", err)
+			}
 		}
 	}
-	if _, err := Mutate(db, owner, in, time.Now()); err != nil {
+	if _, err := mutate(context.Background(), db, owner, in, time.Now(), lookup); err != nil {
 		t.Fatal(err)
 	}
 	var shipArgs map[string]any
@@ -57,6 +71,25 @@ func TestQueueContinuesManualShip(t *testing.T) {
 	w.step(context.Background(), &it)
 	if shipArgs["id"] != in.ShipItem || shipArgs["evidence"] != "ci" || it.Stage != "BUILD" || it.TestPermit != "p" {
 		t.Fatalf("manual ship not continued: %v stage=%s permit=%s", shipArgs, it.Stage, it.TestPermit)
+	}
+}
+
+func TestQueueStopsOnArchitectureFailure(t *testing.T) {
+	item := Item{Stage: "SHIP", Commit: strings.Repeat("a", 40)}
+	w := &Watcher{Now: time.Now, Call: func(_ context.Context, name string, _ map[string]any) (map[string]any, error) {
+		switch name {
+		case "admin_session_status":
+			return map[string]any{"state": "active", "id": "session"}, nil
+		case "integration_ship":
+			return map[string]any{"stage": "ARCHLINT_FAILED", "detail": "executor exceeds its cap"}, nil
+		default:
+			t.Fatalf("unexpected release step %s", name)
+			return nil, nil
+		}
+	}}
+	w.step(context.Background(), &item)
+	if item.Stage != "FAILED" || !strings.Contains(item.Detail, "executor exceeds its cap") || item.TestPermit != "" {
+		t.Fatalf("release should stop before evidence and build: %+v", item)
 	}
 }
 

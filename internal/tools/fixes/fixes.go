@@ -13,12 +13,14 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"mcpshka/internal/failure"
 	"mcpshka/internal/freellm"
 	"mcpshka/internal/gitops"
 	"mcpshka/internal/idempotency"
 	"mcpshka/internal/jobs"
 	"mcpshka/internal/llmgateway"
 	"mcpshka/internal/projectlease"
+	"mcpshka/internal/runoutcome"
 	"mcpshka/internal/tooldef"
 )
 
@@ -106,8 +108,24 @@ func Register(add func(tooldef.Def), m *jobs.Manager, g *gitops.Service, leases 
 			return nil // owner switched the nightly FreeLLM run off
 		}
 		_, err := idempotency.Run(store, "freellm-night:"+now.Format("20060102"), "fixes_night_schedule", "manual", func() (jobs.Snapshot, error) {
-			return m.StartFixes(ctx, func(ctx context.Context) (any, error) { return conveyor.Run(ctx, "night") })
+			job, startErr := m.StartFixes(ctx, func(ctx context.Context) (any, error) {
+				result := conveyor.RunScheduled(ctx)
+				if err := runoutcome.Record(m.Database(), "fixes-night", now.Format("20060102"), result.Result, now); err != nil {
+					_, _ = os.Stderr.WriteString("FreeLLM night outcome: " + err.Error() + "\n")
+				}
+				return result, nil
+			})
+			if jobs.IsNativeJobBusy(startErr) {
+				startErr = failure.RejectedAs(failure.OwnerBusy, "FIXES_JOB_BUSY", "fixes_night_schedule", "the native fixes slot is occupied; the scheduler will retry the same slot", startErr)
+			}
+			return job, startErr
 		})
+		if detail := failure.Details(err); detail != nil && detail.Class == failure.OwnerBusy {
+			out := runoutcome.Resolve(0, true, "fixes_job_slot_busy", "wait for the active native job; the scheduler will retry the same slot")
+			if recordErr := runoutcome.Record(m.Database(), "fixes-night", now.Format("20060102")+":busy", out, now); recordErr != nil {
+				_, _ = os.Stderr.WriteString("FreeLLM night admission outcome: " + recordErr.Error() + "\n")
+			}
+		}
 		return err
 	}
 }

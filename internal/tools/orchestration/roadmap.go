@@ -6,7 +6,6 @@ import (
 	"errors"
 	"mcpshka/internal/idempotency"
 	"mcpshka/internal/projectlease"
-	"mcpshka/internal/toolcontract"
 	"mcpshka/internal/tooldef"
 	"mcpshka/internal/tools/adminops"
 	"path/filepath"
@@ -21,6 +20,11 @@ import (
 	"mcpshka/internal/roadmapitem"
 	"mcpshka/internal/roadmaprun"
 )
+
+type RoadmapNextInput struct {
+	Path  string `json:"path"`
+	Phase string `json:"phase,omitempty" jsonschema:"Optional section ID, such as S5, MT or P0."`
+}
 
 type RoadmapRunInput struct {
 	AllowedAgents  []string `json:"allowed_agents" jsonschema:"Only agents explicitly authorized by the owner for this task. Required: codex, claude, or both. Never infer consent from quotas or a general development request."`
@@ -46,18 +50,19 @@ type RoadmapRunStatusResult struct {
 func RegisterRoadmap(add func(tooldef.Def), manager *jobs.Manager, d RoadmapDeps) {
 	closed, nonDestructive := false, false
 	git := gitops.New(manager.Policy())
+	registerCheckpointSupersede(add, d, git, manager)
 	add(tooldef.New(&mcp.Tool{
 		Name:        "roadmap_next",
-		Description: "«Делай пункты roadmap» starts here: the work order for the next unfinished checkbox of any project's ROADMAP, in the phase project_context names — item id, text and its Exit criterion, the phase rules, the stages to done and how to report. An item is done only when roadmap_close marked it [x]; commits are not items. Reads the main checkout's ROADMAP for worktrees.",
+		Description: "«Делай пункты roadmap» starts here: the work order for the next unfinished checkbox of any project's ROADMAP, in the selected phase or in the phase project_context names — item id, text and its Exit criterion, the phase rules, the stages to done and how to report. An item is done only when roadmap_close marked it [x]; commits are not items. Reads the main checkout's ROADMAP for worktrees. To record an owner-approved replacement in Markdown, use [~] and append <!-- superseded: knowledge:m-… --> or a commit:<full SHA> reference. Superseded items are skipped.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &closed},
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in ProjectProfileInput) (*mcp.CallToolResult, roadmapitem.Order, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in RoadmapNextInput) (*mcp.CallToolResult, roadmapitem.Order, error) {
 		root, err := git.RepoRoot(in.Path)
 		if err != nil {
 			return nil, roadmapitem.Order{}, err
 		}
 		file := roadmaprun.MainRoadmap(root)
 		n, _ := git.CommitsSince(root, file)
-		order, err := roadmapitem.NextFile(root, file, n)
+		order, err := roadmapitem.NextFile(root, file, n, in.Phase)
 		return nil, order, err
 	}))
 	add(tooldef.New(&mcp.Tool{
@@ -130,8 +135,6 @@ func RegisterRoadmap(add func(tooldef.Def), manager *jobs.Manager, d RoadmapDeps
 		return nil, RoadmapRunStatusResult{Runs: runs, Truncated: truncated}, err
 	}))
 }
-
-type ProjectProfileInput = toolcontract.ProjectProfileInput
 
 type RoadmapDeps struct {
 	Store    *idempotency.Store

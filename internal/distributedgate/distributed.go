@@ -65,13 +65,13 @@ func distributedFallback(ctx context.Context, runExecutor func(context.Context, 
 // Root independently re-reads provider APIs; the service journal and forge_ci
 // result are never accepted as evidence. H96 executes one missing shard at a time.
 func Prepare(ctx context.Context, repo, commit, attempt string, runExecutor func(context.Context, []string) ([]byte, error)) (executor.Manifest, error) {
-	p, e := distributedci.LoadPlan(ctx, repo, commit)
+	p, e := distributedci.LoadPublicPlan(ctx, repo, commit)
 	if e != nil {
 		return executor.Manifest{}, e
 	}
 	local := map[int]distributedci.Observation{}
 	for {
-		r := distributedci.Drive(ctx, p, gitprovider.DistributedEvidenceProviders(repo), time.Now(), false)
+		r := distributedci.Drive(ctx, p, gitprovider.DistributedEvidenceProviders(repo, p), time.Now(), false)
 		if r.State == "FAILED" || r.State == "HOLD" {
 			return executor.Manifest{}, fmt.Errorf("distributed CI %s: %s", r.State, r.Table())
 		}
@@ -110,7 +110,11 @@ func Prepare(ctx context.Context, repo, commit, attempt string, runExecutor func
 			if e = r.Verify(p); e != nil {
 				return executor.Manifest{}, e
 			}
-			ev := cievidence.Evidence{Schema: cievidence.Schema, Provider: "distributed", Repository: "distributed:mcpshka", HeadSHA: commit, Tree: p.Tree, BaseSHA: p.Snapshot, Distributed: &r, CheckedAt: time.Now().UTC()}
+			tree, e := distributedci.CanonicalTree(ctx, repo, commit)
+			if e != nil {
+				return executor.Manifest{}, e
+			}
+			ev := cievidence.Evidence{Schema: cievidence.Schema, Provider: "distributed", Repository: "distributed:mcpshka", HeadSHA: commit, Tree: tree, BaseSHA: p.Snapshot, Distributed: &r, CheckedAt: time.Now().UTC()}
 			return executor.PrepareCIEvidence(ctx, DistributedEvidenceBootstrap(repo, commit, attempt), repo, commit, ev)
 		}
 		timer := time.NewTimer(10 * time.Second)

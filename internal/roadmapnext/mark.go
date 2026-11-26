@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"mcpshka/internal/roadmapscan"
 )
 
 // ErrPhaseMoved means the phase heading is no longer where it was selected;
@@ -17,23 +19,30 @@ var ErrPhaseMoved = errors.New("roadmap phase heading not found")
 // title, so edits above it between selection and acceptance are harmless.
 func MarkDone(roadmap string, it Item) (string, int, error) {
 	lines := strings.SplitAfter(roadmap, "\n")
-	in, found, flipped := false, false, 0
+	bodies, _ := roadmapscan.ContentLines(roadmap)
+	in, found, flipped, level := false, false, 0, 0
 	for i, line := range lines {
-		body := strings.TrimRight(line, "\r\n")
+		body := bodies[i]
 		if m := heading.FindStringSubmatch(body); m != nil {
 			if in {
+				if level > 0 && len(m[1]) > level {
+					continue
+				}
 				break
 			}
 			if strings.Trim(m[2], "*` ") == it.Title {
 				in, found = true, true
+				if roadmapscan.SectionID(body) != "" {
+					level = len(m[1])
+				}
 			}
 			continue
 		}
 		if !in {
 			continue
 		}
-		if m := checkbox.FindStringSubmatch(body); m != nil && (m[1] == " " || m[1] == "-") {
-			idx := strings.Index(body, "["+m[1]+"]")
+		if m := roadmapscan.Checkbox.FindStringSubmatch(body); m != nil && (m[2] == " " || m[2] == "-" || m[2] == "~" && roadmapscan.Superseded(m[2], m[4]) == "") {
+			idx := len(m[1])
 			lines[i] = body[:idx] + "[x]" + body[idx+3:] + line[len(body):]
 			flipped++
 		}

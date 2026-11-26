@@ -172,6 +172,14 @@ func (s *Store) FailPendingCAS(key, operation, fingerprint string, operationErr 
 	return s.Fail(key, operation, fingerprint, operationErr)
 }
 
+func (s *Store) FailWithResult(key, operation, fingerprint string, operationErr error, result any) error {
+	data, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	return s.finish(key, operation, fingerprint, Failed, data, operationErr.Error())
+}
+
 func (s *Store) Lookup(key string) (Status, error) {
 	key = strings.TrimSpace(key)
 	if key == "" {
@@ -258,7 +266,13 @@ func (s *Store) ReadResult(key, operation, fingerprint string, out any) (State, 
 		if err := json.Unmarshal(entry.Result, out); err != nil {
 			return entry.State, fmt.Errorf("decode idempotency result: %w", err)
 		}
-	case Failed, Pending:
+	case Failed:
+		if len(entry.Result) > 0 {
+			if err := json.Unmarshal(entry.Result, out); err != nil {
+				return entry.State, fmt.Errorf("decode failed idempotency result: %w", err)
+			}
+		}
+	case Pending:
 	default:
 		return entry.State, fmt.Errorf("invalid idempotency state %q", entry.State)
 	}

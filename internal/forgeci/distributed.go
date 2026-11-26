@@ -7,6 +7,7 @@ import (
 	"mcpshka/internal/ciartifact"
 	"mcpshka/internal/distributedci"
 	"mcpshka/internal/gitprovider"
+	"mcpshka/internal/opencore"
 	"mcpshka/internal/policy"
 	"mcpshka/internal/projectprofile"
 	"time"
@@ -16,15 +17,27 @@ func runDistributed(ctx context.Context, mode, commit string) ([]byte, int, erro
 	if mode != "plan" && mode != "publish" && mode != "status" {
 		return nil, 2, errors.New("distributed mode must be plan, publish or status")
 	}
-	p, e := distributedci.LoadPlan(ctx, Root, commit)
+	var p distributedci.Plan
+	var s *opencore.CISnapshot
+	var e error
+	if mode == "publish" {
+		s, e = opencore.StageCI(ctx, Root, commit, opencore.HostRules(ctx))
+		if e == nil {
+			defer s.Close()
+			p, e = distributedci.PlanPublicSnapshot(ctx, Root, commit, s)
+		}
+	} else {
+		p, e = distributedci.LoadPublicPlan(ctx, Root, commit)
+	}
 	if e != nil {
-		return nil, 2, e
+		b, _ := json.Marshal(map[string]string{"state": "HOLD", "code": "DISTRIBUTED_PLAN_REFUSED", "detail": e.Error()})
+		return b, 1, nil
 	}
 	if mode == "plan" {
 		b, e := json.Marshal(p)
 		return b, 0, e
 	}
-	providers := append(gitprovider.DistributedProviders(Root), pullProvider(ctx, p, mode == "publish"))
+	providers := append(gitprovider.PublicCIProviders(Root, p, s), pullProvider(ctx, p, mode == "publish"))
 	r := distributedci.Drive(ctx, p, providers, time.Now(), mode == "publish")
 	observeModule(ctx, &r)
 	if e := distributedci.SaveMetrics(r); e != nil {
@@ -43,7 +56,7 @@ func distributedStatus(r distributedci.Report) map[string]any {
 	for _, o := range r.Shards {
 		rows = append(rows, map[string]any{"shard": o.Shard, "provider": o.Provider, "state": o.State, "seconds": o.Seconds, "run_id": o.RunID, "failed_packages": o.FailedPackages})
 	}
-	return map[string]any{"schema": r.Schema, "state": r.State, "commit": r.Plan.Commit, "source_tree": r.Plan.Tree, "snapshot": r.Plan.Snapshot, "plan_hash": r.Plan.Hash(), "shards": rows, "table": r.Table(), "trust": "UNTRUSTED", "unavailable": r.Unavailable, "code": r.Code, "next_safe_action": r.NextSafeAction}
+	return map[string]any{"schema": r.Schema, "state": r.State, "commit": r.Plan.Commit, "source_tree": r.Plan.Tree, "export_digest": r.Plan.Digest, "snapshot": r.Plan.Snapshot, "plan_hash": r.Plan.Hash(), "shards": rows, "table": r.Table(), "trust": "UNTRUSTED", "unavailable": r.Unavailable, "code": r.Code, "next_safe_action": r.NextSafeAction}
 }
 
 // RunProject uses the same shard planner and provider evidence for opt-in
@@ -64,7 +77,7 @@ func RunProject(ctx context.Context, mode, commit, root string) ([]byte, int, er
 		return b, 0, e
 	}
 	for {
-		r := distributedci.Drive(ctx, p, gitprovider.DistributedProviders(root), time.Now(), mode == "publish" || mode == "wait")
+		r := distributedci.Drive(ctx, p, gitprovider.DistributedProviders(root, p), time.Now(), mode == "publish" || mode == "wait")
 		if r.State == "MODULE_REQUIRED" {
 			r.State = "INFRA_FAIL"
 		}
@@ -98,7 +111,7 @@ func collectProjectArtifacts(ctx context.Context, root string, p distributedci.P
 			if len(o.Artifacts) == 0 {
 				return errors.New("remote CI passed without build artifacts")
 			}
-			for _, provider := range gitprovider.DistributedProviders(root) {
+			for _, provider := range gitprovider.DistributedProviders(root, p) {
 				if provider.Name() == o.Provider {
 					adapter := provider.(*gitprovider.CIProvider)
 					return ciartifact.Store(root, p, o.Artifacts, func(a distributedci.Artifact) ([]byte, error) { return adapter.FetchArtifact(ctx, p, o, a) })

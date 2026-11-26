@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"mcpshka/internal/runoutcome"
 )
 
 // ImportReport is the coverage of a markdown memory import: every file and
@@ -14,6 +16,7 @@ import (
 // found in the top three (acceptance R@3 ≥ 0.9). Nothing is deleted here:
 // the source goes away only after the owner reads this report.
 type ImportReport struct {
+	runoutcome.Result
 	Files     int      `json:"files"`
 	Records   int      `json:"records"`
 	Changed   int      `json:"changed"`
@@ -36,11 +39,24 @@ type mdPart struct {
 // ImportMarkdown imports a Claude Code style memory directory: one fact per
 // file with name/description/type frontmatter; long logs are cut at "## "
 // sections and then at paragraphs so no text is lost.
-func (s *Store) ImportMarkdown(ctx context.Context, dir, project string) (ImportReport, error) {
-	rep := ImportReport{SourceDir: dir}
+func (s *Store) ImportMarkdown(ctx context.Context, dir, project string) (rep ImportReport, runErr error) {
+	rep.SourceDir = dir
+	blocker, next := "", ""
+	defer func() {
+		if blocker == "" {
+			switch {
+			case runErr != nil || len(rep.Skipped) > 0:
+				blocker, next = "memory_import_read_or_write_failed", "inspect skipped files and memory storage before retrying"
+			case rep.Files > 0 && rep.Records == 0:
+				blocker, next = "memory_import_has_no_usable_sections", "inspect the source Markdown sections"
+			}
+		}
+		rep.Result = runoutcome.Resolve(rep.Changed+rep.Closed, rep.Files > 0 && rep.Records == 0, blocker, next)
+	}()
 	// An unreadable directory is an error, never "0 files" (MCP-168: the
 	// service user could not read /root/.claude and reported success).
 	if _, err := os.ReadDir(dir); err != nil {
+		blocker, next = "memory_import_source_unavailable", "restore directory access before retrying memory-import"
 		return rep, fmt.Errorf("memory import: %w", err)
 	}
 	files, err := filepath.Glob(filepath.Join(dir, "*.md"))
@@ -63,6 +79,17 @@ func (s *Store) ImportMarkdown(ctx context.Context, dir, project string) (Import
 		name := strings.TrimSuffix(filepath.Base(f), ".md")
 		if meta["name"] != "" {
 			name = meta["name"]
+		}
+		// S5.TIDY.2: a checkpoint archive file is history the owner keeps
+		// on disk; it stays out of the index, and what an older import put
+		// there is closed.
+		if strings.Contains(name, "checkpoint-archive") {
+			n, err := s.closeOthers(ctx, "claude-memory:"+name, nil)
+			if err != nil {
+				return rep, err
+			}
+			rep.Closed += n
+			continue
 		}
 		kind := mdKind[meta["type"]]
 		if kind == "" {
@@ -104,9 +131,6 @@ func (s *Store) ImportMarkdown(ctx context.Context, dir, project string) (Import
 			return rep, err
 		}
 		rep.Closed += n
-	}
-	if rep.Files == 0 {
-		return rep, fmt.Errorf("memory import: no *.md memory files in %s", dir)
 	}
 	found := 0
 	for _, p := range probes {

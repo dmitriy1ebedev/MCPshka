@@ -40,6 +40,8 @@ type Deps struct {
 	Owner      func(context.Context) (string, error)
 	RPC        func(context.Context, ...string) ([]byte, error)
 	MemoryExam func(stateDir, root string) (pass bool, detail string, observed bool)
+	// Snapshot returns the facts appended to a new card (issuesnap).
+	Snapshot func(ctx context.Context, project string) string
 }
 type Service struct {
 	FixesNight   func(context.Context) error
@@ -55,6 +57,11 @@ type Service struct {
 
 func New(d Deps) *Service {
 	return &Service{StatePath: "/var/lib/mcpshka/issues/issues.json", OwnerPath: "/var/lib/mcpshka/issues/owners", deps: d}
+}
+
+// SetSnapshot installs the fact gatherer once the tool registry exists.
+func (svc *Service) SetSnapshot(f func(ctx context.Context, project string) string) {
+	svc.deps.Snapshot = f
 }
 
 func (svc *Service) Store() *issues.Store {
@@ -333,7 +340,11 @@ func (svc *Service) Register(add func(tooldef.Def), manager *jobs.Manager, store
 		if len(similar) > 0 && !in.Force {
 			return nil, IssueCreateResult{Incident: hints, Similar: similar, Experience: experience, Next: "check the similar cards (issue_get); same cause → issue_update append; new problem → repeat with force=true"}, nil
 		}
-		i, err := svc.Store().Create(issues.NewIssue{Title: in.Title, Priority: in.Priority, Body: in.Body, Category: in.Category, Project: in.Project, Source: in.Source}, actor)
+		body := in.Body
+		if svc.deps.Snapshot != nil {
+			body += svc.deps.Snapshot(ctx, in.Project)
+		}
+		i, err := svc.Store().Create(issues.NewIssue{Title: in.Title, Priority: in.Priority, Body: body, Category: in.Category, Project: in.Project, Source: in.Source}, actor)
 		if err != nil {
 			return nil, IssueCreateResult{}, err
 		}

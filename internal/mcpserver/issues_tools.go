@@ -4,6 +4,7 @@ import (
 	"context"
 	"mcpshka/internal/brokerclient"
 	"mcpshka/internal/issues"
+	"mcpshka/internal/issuesnap"
 	"mcpshka/internal/jobs"
 	"mcpshka/internal/memory"
 	issuetools "mcpshka/internal/tools/issues"
@@ -18,10 +19,9 @@ func newIssueService() *issuetools.Service {
 var issueService = newIssueService()
 
 func issueStore() *issues.Store { return issueService.Store() }
-func verifyIssueEvidence(i issues.Issue, evidence string, fromOwnerPage bool) error {
-	return issueService.VerifyEvidence(i, evidence, fromOwnerPage)
-}
+var verifyIssueEvidence = issueService.VerifyEvidence
 func registerIssueTools(r *toolRegistry, manager *jobs.Manager) {
+	issueService.SetSnapshot(issuesnap.With(Version, func(n string) issuesnap.Reader { return issuesnap.Reader(r.readers[n]) }))
 	issueService.Register(r.install, manager, r.store)
 }
 

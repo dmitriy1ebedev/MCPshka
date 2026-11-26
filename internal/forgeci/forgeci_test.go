@@ -17,12 +17,12 @@ func TestArgvFixedScripts(t *testing.T) {
 		{"gitverse", "status", Command + " " + Sub + " gitverse status " + sha},
 		{"moshub", "plan", Root + "/packaging/moshub/snapshot.py plan --commit " + sha},
 		{"moshub", "status", Root + "/packaging/moshub/ci_status.py " + sha},
-		{"sourcecraft", "publish", Root + "/packaging/forges/extra_forge.py sourcecraft publish --commit " + sha},
-		{"sourcecraft", "mirror", Root + "/packaging/forges/extra_forge.py sourcecraft mirror --commit " + sha},
-		{"gitflic", "status", Root + "/packaging/forges/extra_forge.py gitflic status --commit " + sha},
-		{"github", "publish", Root + "/packaging/forges/extra_forge.py github publish --commit " + sha},
-		{"github", "mirror", Root + "/packaging/forges/extra_forge.py github mirror --commit " + sha},
-		{"github", "pr", Root + "/packaging/forges/extra_forge.py github pr --commit " + sha},
+		{"sourcecraft", "publish", Command + " " + Sub + " sourcecraft publish " + sha},
+		{"sourcecraft", "mirror", Command + " " + Sub + " sourcecraft mirror " + sha},
+		{"gitflic", "status", Command + " " + Sub + " gitflic status " + sha},
+		{"github", "publish", Command + " " + Sub + " github publish " + sha},
+		{"github", "mirror", Command + " " + Sub + " github mirror " + sha},
+		{"github", "pr", Command + " " + Sub + " github pr " + sha},
 		{"moshub", "rerun", Root + "/packaging/moshub/ci_status.py " + sha + " --rerun"},
 	} {
 		argv, err := Argv(tc.provider, tc.mode, sha)

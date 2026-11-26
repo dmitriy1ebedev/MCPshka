@@ -179,7 +179,7 @@ func TestParseLetteredPhasesWhenNoPPhases(t *testing.T) {
 		t.Fatalf("%+v %v", s, err)
 	}
 	p, err := Parse("## P1 — one\n- [ ] a\n## S1 — two\n- [ ] b\n", "sha")
-	if err != nil || len(p.Phases) != 1 || p.Next.ID != "P1" {
-		t.Fatalf("P-roadmap must keep its phases: %+v %v", p, err)
+	if err != nil || len(p.Phases) != 2 || p.Next.ID != "P1" {
+		t.Fatalf("P-roadmap must retain P-phase priority and include streams: %+v %v", p, err)
 	}
 }

@@ -26,7 +26,7 @@ import (
 type Input struct {
 	Script         string `json:"script" jsonschema:"JavaScript body; return the result. mcp.call(name, args) returns the tool's output object or throws; mcp.all([[name, args], ...]) runs calls in parallel and returns [{ok, value} | {ok:false, error}]; mcp.mutate(name, args) runs one mutating tool only with its idempotency_key (else POLICY_DENIED; UNKNOWN → same call, same key); store.set(key, v)/store.get(key)/store.keys() keep values between code_run calls (2 h); llm.models(), llm.ask(question, data, {model, timeout_seconds, budget_seconds}) and llm.compare(question, data, {count:3}) return background jobs: job_wait then job_output; llm.scope(card, project, root) checks repository scope; console.log(...) is kept. A result over 64 KiB is saved as store 'spill:N' with a preview. Example: const s = mcp.call('git_status', {path: '/root/repos/lane'}); return s.branch"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"1..600, default 20; LLM calls return background jobs"`
-	MaxCalls       int    `json:"max_calls,omitempty" jsonschema:"1..50 tool calls, default 20"`
+	MaxCalls       int    `json:"max_calls,omitempty" jsonschema:"1..50 tool calls, default 50"`
 	Async          bool   `json:"async,omitempty" jsonschema:"Run as a background job that survives the chat (CI wait + logs, up to timeout_seconds): returns {job}; job_wait then job_output give the usual result"`
 }
 
@@ -78,15 +78,18 @@ const (
 )
 
 const (
-	maxScript   = 32 << 10
-	maxOutput   = 64 << 10
-	maxLogs     = 64
-	heapGrowth  = 128 << 20
-	stackFrames = 256
+	maxScript    = 32 << 10
+	maxOutput    = 64 << 10
+	maxLogs      = 64
+	heapGrowth   = 128 << 20
+	stackFrames  = 256
 	maxMutations = 10
+	slotWait     = 8 * time.Second
 )
 
-var slot = make(chan struct{}, 1)
+// slot admits two runs at once: 26.11 the owner worked in several chats in
+// parallel and each got BUSY on plain reads. A third waits a few seconds.
+var slot = make(chan struct{}, 2)
 var toolSlots = make(chan struct{}, parallel)
 
 var removed = []string{"ArrayBuffer", "SharedArrayBuffer", "DataView", "Int8Array", "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array", "Int32Array", "Uint32Array", "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array", "Atomics", "WebAssembly"}
@@ -97,12 +100,16 @@ func Run(ctx context.Context, in Input, host Host) (Result, error) {
 		return out, fmt.Errorf("script must be 1..%d bytes", maxScript)
 	}
 	timeout := time.Duration(clamp(in.TimeoutSeconds, 1, 600, 20)) * time.Second
-	maxCalls := clamp(in.MaxCalls, 1, 50, 20)
+	maxCalls := clamp(in.MaxCalls, 1, 50, 50) // 26.11: a 15-file check hit the old default 20
+	wait := time.NewTimer(slotWait)
+	defer wait.Stop()
 	select {
 	case slot <- struct{}{}:
 		defer func() { <-slot }()
-	default:
-		return out, errors.New("BUSY: another code_run is running; retry in a few seconds")
+	case <-wait.C:
+		return out, errors.New("BUSY: two code_run are running; retry in a few seconds")
+	case <-ctx.Done():
+		return out, ctx.Err()
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -256,7 +263,17 @@ func Run(ctx context.Context, in Input, host Host) (Result, error) {
 		vm.Interrupt("TIMEOUT: " + timeout.String())
 	}()
 
-	v, err := vm.RunString("(function(){\n" + in.Script + "\n})()")
+	// 26.11 audit: «return await mcp.call(…)» was a SyntaxError. Calls are
+	// synchronous, so a script that awaits runs as an async body and its
+	// settled promise is the result.
+	wrapper := "(function(){\n"
+	if strings.Contains(in.Script, "await") {
+		wrapper = "(async function(){\n"
+	}
+	v, err := vm.RunString(wrapper + in.Script + "\n})()")
+	if err == nil {
+		v, err = settled(vm, v)
+	}
 	if err != nil {
 		var intr *goja.InterruptedError
 		if errors.As(err, &intr) {
@@ -384,4 +401,19 @@ func clamp(v, lo, hi, def int) int {
 		return def
 	}
 	return max(lo, min(hi, v))
+}
+
+// settled unwraps an async script's promise once its jobs have run.
+func settled(vm *goja.Runtime, v goja.Value) (goja.Value, error) {
+	p, ok := v.Export().(*goja.Promise)
+	if !ok {
+		return v, nil
+	}
+	switch p.State() {
+	case goja.PromiseStateFulfilled:
+		return p.Result(), nil
+	case goja.PromiseStateRejected:
+		return nil, fmt.Errorf("%v", p.Result())
+	}
+	return nil, errors.New("script awaited something that never settled")
 }

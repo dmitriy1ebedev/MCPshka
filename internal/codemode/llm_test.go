@@ -3,11 +3,13 @@ package codemode
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,5 +81,26 @@ func TestLLMCompareReturnsBackgroundHandle(t *testing.T) {
 	out, e := Run(context.Background(), Input{Script: `return llm.compare("review","public").job.id;`}, h)
 	if e != nil || out.Error != "" || out.Result != "llm-fixture" || !started {
 		t.Fatal(out, e)
+	}
+}
+
+func TestLLMBusyPreservesAcceptedReceipt(t *testing.T) {
+	calls := 0
+	out, err := Run(context.Background(), Input{Script: "return [llm.ask('first'), llm.ask('second')]"}, Host{
+		LLM: &llmgateway.Gateway{},
+		AsyncLLM: func(context.Context, func(context.Context) (any, error)) (any, error) {
+			calls++
+			if calls == 1 {
+				return map[string]any{"job": map[string]string{"id": "accepted-1"}}, nil
+			}
+			return nil, errors.New("BUSY: LLM job already running")
+		},
+	})
+	if err != nil || !strings.Contains(out.Error, "BUSY") || calls != 2 {
+		t.Fatal(out, err)
+	}
+	raw, _ := json.Marshal(out.Result)
+	if !strings.Contains(string(raw), "accepted-1") {
+		t.Fatalf("missing accepted receipt: %s", raw)
 	}
 }

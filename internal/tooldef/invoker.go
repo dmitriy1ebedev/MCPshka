@@ -25,6 +25,11 @@ func InvocationContext(ctx context.Context, req *mcp.CallToolRequest) context.Co
 	return context.WithValue(ctx, invocationRequestKey{}, req)
 }
 
+func InvocationRequest(ctx context.Context) *mcp.CallToolRequest {
+	req, _ := ctx.Value(invocationRequestKey{}).(*mcp.CallToolRequest)
+	return req
+}
+
 func invokerFor[In, Out any](wrapped func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error), tool *mcp.Tool) Invoker {
 	name := tool.Name
 	resolved := resolvedInput[In](tool)

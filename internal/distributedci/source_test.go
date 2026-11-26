@@ -53,6 +53,23 @@ func TestLoadPlanUsesCommittedInventory(t *testing.T) {
 	if len(p.Packages) != 4 {
 		t.Fatal("dirty package entered plan", p.Packages)
 	}
+
+	put(".mcpshka/opencore.json", `{"exclude":["docs"]}`)
+	put("docs/private.md", "internal notes")
+	for _, name := range []string{".github/workflows/distributed.yml", ".gitverse/workflows/distributed.yml", ".gitlab-ci.yml", ".sourcecraft/ci.yaml"} {
+		put(name, "fixture")
+	}
+	git("add", ".mcpshka", "docs", ".github", ".gitverse", ".gitlab-ci.yml", ".sourcecraft")
+	git("-c", "user.name=Fixture", "-c", "user.email=fixture@localhost", "commit", "-qm", "export fixture")
+	exportCommit := git("rev-parse", "HEAD")[:40]
+	public, e := LoadPublicPlan(context.Background(), dir, exportCommit)
+	if e != nil {
+		t.Fatal(e)
+	}
+	canonical, e := CanonicalTree(context.Background(), dir, exportCommit)
+	if e != nil || !digestRE.MatchString(public.Digest) || public.Tree == canonical || len(public.Packages) != len(p.Packages) || ShardRef(public, 0) != "ci/"+exportCommit[:12]+"/shard-0" {
+		t.Fatalf("bad export plan %+v, %v", public, e)
+	}
 }
 
 func TestSourceCommandSuppliesMissingServiceCache(t *testing.T) {

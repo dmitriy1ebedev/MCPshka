@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"mcpshka/internal/knowledge"
+	"mcpshka/internal/runoutcome"
 )
 
 // Session archive sync (ROADMAP S4.K2.4). Claude Code and Codex keep every
@@ -35,6 +37,7 @@ const seenSchema = "CREATE TABLE IF NOT EXISTS mem_inbox_seen(file TEXT PRIMARY 
 
 // SyncReport is one sync run.
 type SyncReport struct {
+	runoutcome.Result
 	Files     int         `json:"files"`
 	Chunks    int         `json:"chunks"`
 	Bytes     int64       `json:"bytes"`
@@ -100,8 +103,15 @@ func turnText(raw []byte) (role, text string, at time.Time) {
 }
 
 // SyncSessions adds new turns of every *.jsonl under roots to the inbox.
-func (s *Store) SyncSessions(ctx context.Context, roots []string) (SyncReport, error) {
-	rep := SyncReport{}
+func (s *Store) SyncSessions(ctx context.Context, roots []string) (rep SyncReport, runErr error) {
+	input := false
+	blocker, next := "", ""
+	defer func() {
+		if runErr != nil && blocker == "" {
+			blocker, next = "session_sync_failed", "inspect the sync error before retrying"
+		}
+		rep.Result = runoutcome.Resolve(rep.Chunks, input, blocker, next)
+	}()
 	if _, err := s.exec(ctx, inboxSchema+"\n"+seenSchema); err != nil {
 		return rep, err
 	}
@@ -116,30 +126,56 @@ func (s *Store) SyncSessions(ctx context.Context, roots []string) (SyncReport, e
 	}
 	var files []string
 	for _, root := range roots {
-		_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
-			if err == nil && !d.IsDir() && strings.HasSuffix(p, ".jsonl") {
+		err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.Type().IsRegular() && strings.HasSuffix(p, ".jsonl") {
 				files = append(files, p)
 			}
 			return nil
 		})
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			blocker, next = "session_source_unreadable", "restore archive directory access and rerun memory-sync"
+			continue
+		}
 	}
 	sort.Strings(files)
 	for _, f := range files {
 		info, err := os.Stat(f)
-		if err != nil || info.Size() <= seen[f] {
+		if err != nil {
+			blocker, next = "session_file_unreadable", "check session file before retrying memory-sync"
 			continue
 		}
+		if info.Size() < seen[f] {
+			blocker, next = "session_cursor_past_end", "inspect archive truncation and its persisted offset"
+			continue
+		}
+		if info.Size() == seen[f] {
+			continue
+		}
+		input = true
 		if rep.Bytes >= syncBudget {
 			rep.Remaining = true
 			break
 		}
 		n, read, err := s.syncFile(ctx, f, seen[f])
 		if err != nil {
+			blocker, next = "session_file_read_or_commit_failed", "inspect the file and persisted offset before retrying"
 			return rep, err
+		}
+		if n == 0 && blocker == "" {
+			blocker, next = "session_cursor_has_no_new_complete_turns", "wait for a complete turn or inspect the skipped input"
 		}
 		rep.Files++
 		rep.Chunks += n
 		rep.Bytes += read
+	}
+	if rep.Chunks > 0 && blocker == "session_cursor_has_no_new_complete_turns" {
+		blocker, next = "", ""
 	}
 	rep.Inbox, err = s.Inbox(ctx)
 	return rep, err
@@ -150,7 +186,7 @@ func (s *Store) SyncSessions(ctx context.Context, roots []string) (SyncReport, e
 func (s *Store) syncFile(ctx context.Context, file string, offset int64) (int, int64, error) {
 	f, err := os.Open(file)
 	if err != nil {
-		return 0, 0, nil // vanished or unreadable: nothing to add
+		return 0, 0, err
 	}
 	defer f.Close()
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
@@ -176,6 +212,9 @@ func (s *Store) syncFile(ctx context.Context, file string, offset int64) (int, i
 	for {
 		raw, err := r.ReadBytes('\n')
 		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				return 0, 0, err
+			}
 			break // a partial last line is read again next time
 		}
 		read += int64(len(raw))
@@ -196,6 +235,9 @@ func (s *Store) syncFile(ctx context.Context, file string, offset int64) (int, i
 		}
 		emit("owner: " + text + "\n")
 	}
+	if read == 0 {
+		return 0, 0, nil
+	}
 	if pending != "" {
 		emit("assistant: " + pending + "\n")
 	}
@@ -207,7 +249,8 @@ func (s *Store) syncFile(ctx context.Context, file string, offset int64) (int, i
 	}
 	name := filepath.Base(filepath.Dir(file)) + "/" + strings.TrimSuffix(filepath.Base(file), ".jsonl")
 	var q strings.Builder
-	q.WriteString("BEGIN IMMEDIATE;\n")
+	q.WriteString("BEGIN IMMEDIATE;\nCREATE TEMP TABLE session_fence(ok INTEGER CHECK(ok=1));\n")
+	fmt.Fprintf(&q, "INSERT INTO session_fence SELECT coalesce((SELECT offset FROM mem_inbox_seen WHERE file=%s),0)=%d;\n", lit(file), offset)
 	for i, text := range chunks {
 		sum := sha256.Sum256([]byte(text))
 		id := "chat:" + hex.EncodeToString(sum[:8])
@@ -215,7 +258,11 @@ func (s *Store) syncFile(ctx context.Context, file string, offset int64) (int, i
 		q.WriteString("INSERT OR IGNORE INTO mem_inbox(id,file,title,text,at) VALUES(" + lit(id) + "," + lit("session:"+file) + "," + lit(title) + "," + lit(text) + "," + litTime(&first) + ");\n")
 	}
 	now := s.now().UTC()
-	q.WriteString(fmt.Sprintf("INSERT INTO mem_inbox_seen(file,offset,at) VALUES(%s,%d,%s) ON CONFLICT(file) DO UPDATE SET offset=excluded.offset, at=excluded.at;\nCOMMIT;", lit(file), offset+read, litTime(&now)))
-	_, err = s.execFor(ctx, 30*time.Second, q.String())
-	return len(chunks), read, err
+	q.WriteString(fmt.Sprintf("INSERT INTO mem_inbox_seen(file,offset,at) VALUES(%s,%d,%s) ON CONFLICT(file) DO UPDATE SET offset=excluded.offset, at=excluded.at;\nCOMMIT;\nSELECT total_changes()-2 AS inserted;", lit(file), offset+read, litTime(&now)))
+	rows, err := s.execFor(ctx, 30*time.Second, q.String())
+	if err != nil {
+		return 0, 0, err
+	}
+	n, _ := rows[0]["inserted"].(float64)
+	return int(n), read, nil
 }

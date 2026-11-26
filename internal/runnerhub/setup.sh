@@ -1,11 +1,8 @@
 #!/bin/sh
-# MCPshka runner setup — one line in any cloud IDE terminal:
-#   curl -fsSL @ORIGIN@/runner/setup | sh -s TOKEN   (first time)
-#   curl -fsSL @ORIGIN@/runner/setup | sh            (again, key is kept)
-# The key and agent live where the IDE keeps files across restarts
-# (/workspaces, ~/workspace, else ~); autostart goes to ~/.bashrc.
-# The runner exits by itself after 10 min without jobs.
-set -e
+# First registration: curl -fsSL @ORIGIN@/runner/setup | sh -s TOKEN
+# Rerun without TOKEN to use the existing credential.
+set -eu
+umask 077
 U='@ORIGIN@'
 D=$HOME
 for d in /workspaces "$HOME/workspace"; do
@@ -15,36 +12,52 @@ D=$D/.mcpshka-runner
 mkdir -p "$D"
 echo '*' >"$D/.gitignore"
 [ -f "$D/key.json" ] || [ ! -f "$HOME/.mcpshka-runner.json" ] || cp "$HOME/.mcpshka-runner.json" "$D/key.json"
-cat >"$D/start" <<S
+printf '%s\n' "$U" >"$D/origin"
+start=$(mktemp "$D/.start.XXXXXX")
+trap 'rm -f "$start"' EXIT
+cat >"$start" <<'START'
 #!/bin/sh
-pgrep -f "$D/runner.py" >/dev/null 2>&1 && exit 0
-curl -fsSL "$U/runner/agent.py" -o "$D/runner.new" && mv "$D/runner.new" "$D/runner.py"
-nohup python3 "$D/runner.py" --url "$U" --conf "$D/key.json" "\$@" >>"$D/log" 2>&1 &
-S
-chmod 700 "$D/start"
-pkill -f 'mcpshka-runner.py' 2>/dev/null || true
-pkill -f "$HOME/runner --url" 2>/dev/null || true
+set -eu
+umask 077
+D=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+U=$(cat "$D/origin")
+case "$(uname -s):$(uname -m)" in
+  Linux:x86_64|Linux:amd64) arch=amd64 ;;
+  Linux:aarch64|Linux:arm64) arch=arm64 ;;
+  *) echo "MCPshka runner requires Linux amd64 or arm64" >&2; exit 1 ;;
+esac
+tmp=$(mktemp "$D/.runner.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+curl -fsSL --connect-timeout 10 --max-time 120 --retry 2 "$U/runner/download/linux-$arch" -o "$tmp"
+chmod 700 "$tmp"
+mv "$tmp" "$D/runner"
+nohup "$D/runner" --url "$U" --conf "$D/key.json" "$@" >>"$D/log" 2>&1 &
+START
+chmod 700 "$start"
+mv "$start" "$D/start"
+if [ "${1:-}" = --start ]; then
+  exec sh "$D/start"
+fi
 rc=$HOME/.bashrc
-[ -f "$rc" ] && sed -i '\#bash ~/up#d' "$rc"
 grep -qs '.mcpshka-runner/start' "$rc" || echo "sh '$D/start' >/dev/null 2>&1" >>"$rc"
-if [ -n "$1" ]; then sh "$D/start" --token "$1"; else sh "$D/start"; fi
-# A folder-open task starts a terminal even when the IDE restores none.
+if [ -n "${1:-}" ]; then sh "$D/start" --token "$1"; else sh "$D/start"; fi
+
+# The folder-open task starts the runner when no terminal is restored.
 mkdir -p "$D/keeper"
-python3 - "$D" <<'PY'
-import json
-import os
-import sys
-d = sys.argv[1]
-task = {"label": "MCPshka pull runner", "type": "process", "command": "/bin/sh",
-        "args": [os.path.join(d, "start")], "problemMatcher": [],
-        "runOptions": {"runOn": "folderOpen"},
-        "presentation": {"reveal": "silent", "panel": "dedicated"}}
-with open(os.path.join(d, "keeper.code-workspace"), "w") as f:
-    json.dump({"folders": [{"path": "keeper"}],
-               "settings": {"task.allowAutomaticTasks": "on"},
-               "tasks": {"version": "2.0.0", "tasks": [task]}}, f)
-PY
+cat >"$D/keeper.code-workspace" <<'WORKSPACE'
+{
+  "folders": [{"path": "keeper"}],
+  "settings": {"task.allowAutomaticTasks": "on"},
+  "tasks": {"version": "2.0.0", "tasks": [{
+    "label": "MCPshka pull runner",
+    "type": "process",
+    "command": "/bin/sh",
+    "args": ["${workspaceFolder}/../start"],
+    "problemMatcher": [],
+    "runOptions": {"runOn": "folderOpen"},
+    "presentation": {"reveal": "silent", "panel": "dedicated"}
+  }]}
+}
+WORKSPACE
 echo "Автозапуск IDE: откройте $D/keeper.code-workspace и разрешите автоматические задачи"
-sleep 5
-tail -n 3 "$D/log"
-echo "MCPshka runner: $D (autostart on)"
+echo "Журнал раннера: $D/log"

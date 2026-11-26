@@ -1,5 +1,7 @@
 name: MCPshka distributed CI
 on:
+  push:
+    branches: ['ci/**']
   workflow_dispatch:
     inputs:
       shard:
@@ -23,7 +25,26 @@ concurrency:
   group: distributed-${{ github.ref }}-${{ inputs.shard }}
   cancel-in-progress: false
 jobs:
+  public-shard:
+    if: github.event_name == 'push'
+    name: distributed-shard
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      CI_PUBLIC_REF: ${{ github.ref }}
+      CI_RUN_ID: ${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Vet and test the exported shard
+        run: sudo env -i "PATH=$PATH" "CI_PUBLIC_REF=$CI_PUBLIC_REF" "CI_RUN_ID=$CI_RUN_ID" sh packaging/ci/distributed_shard.sh github
   shard:
+    if: github.event_name == 'workflow_dispatch'
     name: distributed-shard-${{ inputs.shard }}
     runs-on: ubuntu-latest
     timeout-minutes: 50

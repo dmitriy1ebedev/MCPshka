@@ -38,13 +38,14 @@ import (
 	"mcpshka/internal/systemdsvc"
 	"mcpshka/internal/toolcontract"
 	"mcpshka/internal/tooldef"
+	"mcpshka/internal/tools/autonomy"
 	"mcpshka/internal/tools/processtools"
 	"mcpshka/internal/toolstats"
 	"mcpshka/internal/trafficcompat"
 	"mcpshka/internal/verify"
 )
 
-const Version = "0.19.2"
+const Version = "0.19.4"
 
 func makeNetworkStageStatus(control controlplane.Snapshot, lane laneprovider.Status, laneErr error, network networkops.StateDigest, networkErr error) NetworkStageStatusResult {
 	return toolcontract.MakeNetworkStageStatus(control, lane, laneErr, network, networkErr)
@@ -119,6 +120,7 @@ func newServers(manager *jobs.Manager, files *filesystem.Service, artifactManage
 	registerGitProviderTools(registry)
 	registerGitProviderPush(registry, manager)
 	registerToolUsage(registry, manager.Database())
+	autonomy.Register(registry.install, manager)
 	registerSalvageTool(registry, git)
 	registerHostRebootPlan(registry, manager)
 	registerRoadmapTools(registry, manager)
@@ -224,6 +226,7 @@ func newServers(manager *jobs.Manager, files *filesystem.Service, artifactManage
 	registerLeaseTools(registry, deps)
 	registerDeployTools(registry, deps)
 	registerCapabilityTools(registry, manager.Policy())
+	registerIntegrationShip(registry, integrations)
 	registry.validate()
 	return s, newCoreServer(registry)
 }

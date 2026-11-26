@@ -35,10 +35,10 @@ var (
 	tailnet   = regexp.MustCompile(`\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.ts\.net\b`)
 	privateIP = regexp.MustCompile(`\b(?:192\.168|10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7]))\.\d{1,3}\.\d{1,3}\b`)
 	homePath  = regexp.MustCompile(`/root/|/home/[a-z_][a-z0-9_-]*/`)
-	token     = regexp.MustCompile(`\b(?:ghp_|gho_|glpat-|sk-)[A-Za-z0-9_\-]{20,}`)
+	token     = regexp.MustCompile(`\b(?:gh[pousr]_|github_pat_|glpat-|sk-)[A-Za-z0-9_\-]{20,}`)
 	pemKey    = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)
 	assigned  = regexp.MustCompile(`(?i)\b(?:token|password|passwd|secret)\s*[:=]\s*["']([^"'\s]{12,})["']`)
-	textExt   = map[string]bool{".go": true, ".md": true, ".json": true, ".yml": true, ".yaml": true, ".sh": true, ".py": true, ".txt": true, ".toml": true, "": true}
+	textExt   = map[string]bool{".go": true, ".md": true, ".json": true, ".yml": true, ".yaml": true, ".sh": true, ".py": true, ".txt": true, ".toml": true, ".pem": true, ".key": true, ".env": true, "": true}
 	skipDir   = map[string]bool{".git": true, "vendor": true, "node_modules": true, "testdata": true}
 )
 

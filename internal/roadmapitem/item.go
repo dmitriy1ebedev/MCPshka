@@ -18,19 +18,17 @@ import (
 )
 
 var (
-	checkbox = regexp.MustCompile(`^(\s*(?:[-*+]|\d+\.)\s*\**\s*)\[( |-|x|X)\](\s*\**\s*)(.*)$`)
-	entryID  = regexp.MustCompile(`^([A-Z]{1,4}[0-9]{1,3}[a-z]?(?:\.[0-9]{1,2})?)[.:)]?(?:[\s*]|$)`)
-	exitRe   = regexp.MustCompile(`(?:Exit|Приёмка|Готово|DONE|Done)\**\s*[:—]\s*\**\s*(.+)$`)
-	anyHead  = regexp.MustCompile(`^(#{1,6})\s`)
+	exitRe = regexp.MustCompile(`(?:Exit|Приёмка|Готово|DONE|Done)\**\s*[:—]\s*\**\s*(.+)$`)
 )
 
 // Entry is one checkbox of a phase.
 type Entry struct {
-	ID    string `json:"id"`
-	Text  string `json:"text"`
-	Line  int    `json:"line"`
-	State string `json:"state"` // open, partial ([-]) or done
-	Exit  string `json:"exit,omitempty"`
+	ID       string `json:"id"`
+	Text     string `json:"text"`
+	Line     int    `json:"line"`
+	State    string `json:"state"` // open, partial ([-]) or done
+	Decision string `json:"decision,omitempty"`
+	Exit     string `json:"exit,omitempty"`
 }
 
 // Phase is a roadmap section with its checkboxes and its prose (rules,
@@ -76,8 +74,8 @@ func clip(s string, n int) string {
 // headings) plus the stream sections (S1–S5, C1…) whose items are closed
 // the same way. A roadmap without phase headings is one queue «Q».
 func Parse(content string) []Phase {
-	lines := strings.Split(content, "\n")
-	heads := roadmapscan.ItemHeadings(content)
+	lines, _ := roadmapscan.ContentLines(content)
+	heads := roadmapscan.Headings(content)
 	if len(heads) == 0 {
 		heads = []roadmapscan.Heading{{ID: "Q", Title: "Очередь", Line: -1}}
 	}
@@ -89,10 +87,10 @@ func Parse(content string) []Phase {
 		exit := ""
 		for i := h.Line + 1; i < len(lines); i++ {
 			line := strings.TrimSuffix(lines[i], "\r")
-			if m := anyHead.FindStringSubmatch(line); m != nil && h.Level > 0 && len(m[1]) <= h.Level {
+			if level := roadmapscan.HeadingLevel(line); level > 0 && h.Level > 0 && level <= h.Level {
 				break
 			}
-			m := checkbox.FindStringSubmatch(line)
+			m := roadmapscan.Checkbox.FindStringSubmatch(line)
 			if m == nil {
 				if t := strings.TrimSpace(line); t != "" && h.Level > 0 {
 					rules = append(rules, t)
@@ -109,9 +107,13 @@ func Parse(content string) []Phase {
 				e.State = "partial"
 			case "x", "X":
 				e.State = "done"
+			case "~":
+				if e.Decision = roadmapscan.Superseded(m[2], text); e.Decision != "" {
+					e.State = "superseded"
+				}
 			}
-			if id := entryID.FindStringSubmatch(text); id != nil && !seen[id[1]] {
-				e.ID = id[1]
+			if id := roadmapscan.EntryID(text); id != "" && !seen[id] {
+				e.ID = id
 			} else {
 				// Positional id; an explicit one may already hold the number
 				// ("S5.6 Каталог" is S5's 4th box, the 6th one gets S5.6a).
@@ -166,10 +168,16 @@ const (
 // Next builds the work order for the first unfinished item of the phase
 // project_context names as current.
 func Next(content string) (Order, error) {
+	return NextPhase(content, "")
+}
+
+func NextPhase(content, want string) (Order, error) {
 	phases := Parse(content)
-	want := ""
-	if snap, err := roadmapscan.Parse(content, ""); err == nil && snap.Next != nil {
-		want = snap.Next.ID
+	explicit := want != ""
+	if want == "" {
+		if snap, err := roadmapscan.Parse(content, ""); err == nil && snap.Next != nil {
+			want = snap.Next.ID
+		}
 	}
 	for _, p := range phases {
 		if want != "" && p.ID != want {
@@ -177,7 +185,7 @@ func Next(content string) (Order, error) {
 		}
 		o := Order{Phase: p.ID, PhaseTitle: p.Title, Progress: fmt.Sprintf("%d/%d", p.done(), len(p.Entries)), PhaseRules: p.Rules, Stages: Stages, DoneWhen: doneWhen, Report: report}
 		for i := range p.Entries {
-			if e := p.Entries[i]; e.State != "done" {
+			if e := p.Entries[i]; e.State != "done" && e.State != "superseded" {
 				if o.Item == nil {
 					o.Item = &e
 				} else {
@@ -189,11 +197,18 @@ func Next(content string) (Order, error) {
 		case o.Item == nil && want == "":
 			continue
 		case o.Item == nil:
-			o.Warning = "В фазе " + p.ID + " нет открытых чекбоксов: запиши её работу пунктами «- [ ] **ID. Название.** … Exit: проверяемое условие» и только потом берись за код."
+			if len(p.Entries) == 0 {
+				o.Warning = "В фазе " + p.ID + " нет чекбоксов: запиши работу пунктами с проверяемым Exit."
+			} else {
+				o.Warning = "В фазе " + p.ID + " нет открытых чекбоксов."
+			}
 		case o.Item.Exit == "":
 			o.Warning = "У пункта " + o.Item.ID + " нет Exit: до работы допиши в его строку «Exit: проверяемое условие», иначе его нечем принять."
 		}
 		return o, nil
+	}
+	if explicit {
+		return Order{}, fmt.Errorf("roadmap has no section %s", want)
 	}
 	return Order{}, errors.New("roadmap has no open items")
 }
@@ -215,13 +230,15 @@ func Close(content string, ids []string, date, note string) (out string, closed,
 		switch {
 		case !ok:
 			return "", nil, nil, fmt.Errorf("roadmap has no item %s (ids come from roadmap_next)", id)
+		case e.State == "superseded":
+			return "", nil, nil, fmt.Errorf("roadmap item %s was superseded by %s", id, e.Decision)
 		case e.State == "done":
 			already = append(already, id)
 			continue
 		}
 		raw := lines[e.Line-1]
 		line := strings.TrimSuffix(raw, "\r")
-		m := checkbox.FindStringSubmatch(line)
+		m := roadmapscan.Checkbox.FindStringSubmatch(line)
 		if m == nil {
 			return "", nil, nil, fmt.Errorf("item %s moved: read roadmap_next again", id)
 		}
@@ -274,12 +291,12 @@ func CloseFile(path string, ids []string, date, note string) (closed, already []
 
 // NextFile is Next for a roadmap file plus the honesty check: commits
 // piling up while the roadmap stays untouched mean nothing was closed.
-func NextFile(root, path string, commitsSinceRoadmap int) (Order, error) {
+func NextFile(root, path string, commitsSinceRoadmap int, phase string) (Order, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return Order{}, err
 	}
-	o, err := Next(string(raw))
+	o, err := NextPhase(string(raw), phase)
 	o.Root, o.Roadmap = root, path
 	if err == nil && commitsSinceRoadmap >= 10 {
 		o.Warning = strings.TrimSpace(o.Warning + fmt.Sprintf(" %d коммитов после последнего изменения ROADMAP: ни один пункт ими не закрыт. Доведи текущий до roadmap_close, новые заготовки не добавляй.", commitsSinceRoadmap))

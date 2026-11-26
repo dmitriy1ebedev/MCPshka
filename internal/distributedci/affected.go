@@ -245,6 +245,8 @@ func packageGraph(root string, raw []byte) (map[string][]string, error) {
 	return graph, nil
 }
 
+const ArchlintFailed = "ARCHLINT_PRECHECK_FAILED"
+
 // RunAffected vets and tests the sealed package list inside the sandbox and
 // returns the process exit code.
 func RunAffected(ctx context.Context, list string, out io.Writer) int {
@@ -262,6 +264,9 @@ func RunAffected(ctx context.Context, list string, out io.Writer) int {
 		c := exec.CommandContext(ctx, "go", args...)
 		c.Stdout, c.Stderr = out, out
 		if e := c.Run(); e != nil {
+			if slices.Equal(args, []string{"test", "-count=1", archlintDir}) {
+				io.WriteString(out, ArchlintFailed+"\n")
+			}
 			var exit *exec.ExitError
 			if errors.As(e, &exit) && exit.ExitCode() > 0 {
 				return exit.ExitCode()

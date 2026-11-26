@@ -35,5 +35,6 @@ jobs:
         run: |
           set +x
           echo "::add-mask::$MCPSHKA_RUNNER_TOKEN"
-          curl -fsSL "$MCPSHKA_RUNNER_URL/runner/agent.py" -o "$RUNNER_TEMP/r.py"
-          python3 "$RUNNER_TEMP/r.py" --url "$MCPSHKA_RUNNER_URL" --name "ci-github-$RUN_ID" --conf "$RUNNER_TEMP/k.json" --idle-exit 3
+          curl -fsSL "$MCPSHKA_RUNNER_URL/runner/download/linux-$(go env GOARCH)" -o "$RUNNER_TEMP/mcpshka-runner"
+          chmod 700 "$RUNNER_TEMP/mcpshka-runner"
+          "$RUNNER_TEMP/mcpshka-runner" --url "$MCPSHKA_RUNNER_URL" --name "ci-github-$RUN_ID" --conf "$RUNNER_TEMP/k.json" --idle-exit 3

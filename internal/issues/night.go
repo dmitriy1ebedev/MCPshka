@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"mcpshka/internal/runoutcome"
 )
 
 // Verdicts, in brief order.
@@ -37,6 +39,7 @@ var nightOrder = []string{NightGone, NightAwaitAccept, NightAgentDone, NightStil
 
 // NightInput is what the review sees of the live host.
 type NightInput struct {
+	Autonomy string
 	Now      time.Time
 	Findings []Finding                // this pass of host_triage, any severity
 	Prod     string                   // installed MCPshka version
@@ -50,9 +53,11 @@ type NightCard struct {
 }
 
 type NightReport struct {
-	At    time.Time   `json:"at"`
-	Prod  string      `json:"prod"`
-	Cards []NightCard `json:"cards"`
+	runoutcome.Result
+	Autonomy string      `json:"autonomy,omitempty"`
+	At       time.Time   `json:"at"`
+	Prod     string      `json:"prod"`
+	Cards    []NightCard `json:"cards"`
 }
 
 // versionLess compares 0.N.M versions; unparsable is never less.
@@ -111,29 +116,40 @@ func (s *Store) NightReview(in NightInput) (NightReport, error) {
 	}
 	list, _, err := s.List(Filter{Status: "active", Limit: maxIssues})
 	if err != nil {
-		return NightReport{}, err
+		return NightReport{Result: runoutcome.Resolve(0, true, "issue_registry_unavailable", "check registry access before retrying night review")}, err
 	}
 	day := in.Now.Format("02.01")
-	rep := NightReport{At: in.Now.UTC(), Prod: in.Prod}
+	rep := NightReport{At: in.Now.UTC(), Prod: in.Prod, Autonomy: in.Autonomy}
+	blocker, next := "", ""
+	written := 0
 	for _, sum := range list {
 		i, err := s.Get(sum.ID)
 		if err != nil {
+			blocker, next = "issue_card_unreadable", "inspect issue registry access and rerun failed cards"
 			continue
 		}
 		c := NightCard{ID: i.ID, Verdict: Verdict(i, in), Since: day}
 		if old, ok := since[i.ID]; ok && old.Verdict == c.Verdict {
 			c.Since = old.Since
 		} else if c.Verdict != NightOpen {
-			_, _ = s.Update(i.ID, Patch{Append: "**Ночной разбор " + day + ":** " + nightLabel[c.Verdict] + nightHint(c.Verdict)}, "mcpshka-night")
+			if _, err := s.Update(i.ID, Patch{Append: "**Ночной разбор " + day + ":** " + nightLabel[c.Verdict] + nightHint(c.Verdict)}, "mcpshka-night"); err != nil {
+				blocker, next = "issue_verdict_update_failed", "inspect issue registry permissions and retry the affected cards"
+				continue
+			}
+			written++
 		}
 		rep.Cards = append(rep.Cards, c)
 	}
+	rep.Result = runoutcome.Resolve(len(rep.Cards), len(list) > 0, blocker, next)
 	data, err := json.MarshalIndent(rep, "", "  ")
 	if err == nil {
 		tmp := s.nightPath() + ".tmp"
 		if err = os.WriteFile(tmp, data, 0o600); err == nil {
 			err = os.Rename(tmp, s.nightPath())
 		}
+	}
+	if err != nil {
+		rep.Result = runoutcome.Resolve(written, len(list) > 0, "night_report_write_failed", "inspect report storage before retrying the night review")
 	}
 	return rep, err
 }
@@ -189,6 +205,9 @@ func NightBrief(r NightReport, now time.Time) string {
 	line := fmt.Sprintf("Ночной разбор %s: карточек %d", r.At.Local().Format("02.01 15:04"), len(r.Cards))
 	if len(parts) > 0 {
 		line += " · " + strings.Join(parts, " · ")
+	}
+	if r.Autonomy != "" {
+		line += "\n" + r.Autonomy
 	}
 	return line
 }

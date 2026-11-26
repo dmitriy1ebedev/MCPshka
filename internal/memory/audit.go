@@ -36,6 +36,7 @@ type AuditReport struct {
 	Duplicates int            `json:"duplicates"`
 	OldRelease int            `json:"old_releases"`
 	NoSource   int            `json:"no_source"`
+	Conflicts  []Conflict     `json:"conflicts,omitempty"` // K2.2: same topic, different body — check by hand
 	Plan       []AuditOp      `json:"plan"`
 	PlanSHA    string         `json:"plan_sha,omitempty"`
 	Control    ControlReport  `json:"control"`
@@ -141,6 +142,7 @@ func (s *Store) Audit(ctx context.Context) (AuditReport, error) {
 		keep(g, "есть выпуск новее", &rep.OldRelease)
 	}
 	sort.Slice(rep.Plan, func(i, j int) bool { return rep.Plan[i].ID < rep.Plan[j].ID })
+	rep.Conflicts = conflicts(recs)
 	if rep.Control, err = s.control(ctx, planned); err != nil {
 		return rep, err
 	}

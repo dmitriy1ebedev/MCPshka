@@ -18,6 +18,7 @@ import (
 	"mcpshka/internal/hostclean"
 	"mcpshka/internal/hostconfig"
 	"mcpshka/internal/hostprocess"
+	"mcpshka/internal/rootbroker/diagtraffic"
 	"mcpshka/internal/rootledgerreap"
 	"mcpshka/internal/tools/lanetools"
 	"mcpshka/internal/transientunit"
@@ -32,11 +33,9 @@ import (
 )
 
 const (
-	DefaultConfigPath   = "/etc/mcpshka/broker.json"
-	diagTrafficHelper   = "/usr/local/libexec/diag-traffic-route-observe"
-	diagTrafficRunsRoot = "/var/lib/diag/traffic-runs"
-	maxOutputBytes      = 64 * 1024
-	commandTimeout      = 30 * time.Second
+	DefaultConfigPath = "/etc/mcpshka/broker.json"
+	maxOutputBytes    = 64 * 1024
+	commandTimeout    = 30 * time.Second
 )
 
 type Config struct {
@@ -224,13 +223,11 @@ func Run(ctx context.Context, cfg Config, family string, args []string) ([]byte,
 		}
 		bin, _ = os.Executable() // S5.GO: the broker's own Go code (statebackup)
 	case "diag-traffic":
-		if err := validateDiagTraffic(args); err != nil {
+		if err := diagtraffic.Validate(args); err != nil {
 			return nil, err
 		}
-		if err := validateRootOwnedExecutable(diagTrafficHelper); err != nil {
-			return nil, fmt.Errorf("diag traffic helper: %w", err)
-		}
-		bin = diagTrafficHelper
+		bin = "/proc/self/exe"
+		args = append([]string{"diag-traffic"}, args...)
 	case "diag-smoke":
 		if err := diagcontract.ValidateSmoke(args); err != nil {
 			return nil, err

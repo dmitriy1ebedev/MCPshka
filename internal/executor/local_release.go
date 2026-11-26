@@ -30,7 +30,13 @@ const MaxReleaseImage = 64 << 20
 const LocalReleasePurpose = "project-local-release-v1"
 const LocalReleaseProfile = "local-release-v1"
 const localReleasePackage = "release:paired"
-const localBuildScript = "go version > /scratch/toolchain.txt\ngo build -p 2 -trimpath -buildvcs=false -o /scratch/controller ./cmd/mcpshka\ngo build -p 2 -trimpath -buildvcs=false -o /scratch/broker ./cmd/mcpshka-broker"
+const localBuildScript = `go version > /scratch/toolchain.txt
+sh packaging/native/build-runner-assets.sh /scratch/runner-assets
+mkdir /scratch/controller-src
+cp -R cmd internal go.mod go.sum /scratch/controller-src/
+cp /scratch/runner-assets/linux-*.gz /scratch/controller-src/internal/runnerhub/assets/
+(cd /scratch/controller-src && go build -p 2 -trimpath -buildvcs=false -o /scratch/controller ./cmd/mcpshka)
+go build -p 2 -trimpath -buildvcs=false -o /scratch/broker ./cmd/mcpshka-broker`
 
 var localReleaseCommand = []string{"/bin/sh", "-ec", localBuildScript}
 

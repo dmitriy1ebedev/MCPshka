@@ -15,10 +15,10 @@
 | POLICY_DENIED | Вход или операция вне политики | tool_resolve: allowed read-only alternative |
 | APPROVAL_REQUIRED | Требуется согласование | tool_resolve: approval status |
 | FENCED_UNKNOWN | Admission, fencing или эффект не доказан | mutation_contracts {} |
-| TRANSIENT | Операция прервана | tool_resolve: inspect interrupted operation before retry |
-| FAILED_VERIFIED | Известна конкретная ошибка выполнения | tool_resolve: inspect verified failure |
+| TRANSIENT | Операция прервана | tool_resolve: idempotency_status (квитанция ключа, затем повтор тем же ключом) |
+| FAILED_VERIFIED | Известна конкретная ошибка выполнения | tool_resolve: interaction_recovery_diagnose |
 | HOLD_EVIDENCE_MISSING | Нет требуемого доказательства | tool_resolve: integration_test_prepare |
-| DEADLINE | Исчерпан бюджет контекста | tool_resolve: inspect deadline budget before retry |
+| DEADLINE | Исчерпан бюджет контекста | tool_resolve: idempotency_status (квитанция ключа, затем повтор тем же ключом) |
 
 `tool_resolve` получает указанный текст в аргументе `goal`.
 Действие является предложением: классификация не выполняет ремонт, запуск,

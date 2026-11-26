@@ -242,6 +242,21 @@ func ProbeArguments(name, probe string, in, out map[string]any, before bool) (st
 		} else {
 			args["deployment_id"] = id
 		}
+	case "memory_archive_status":
+		var id string
+		if !before {
+			for _, field := range []string{"run", "receipt"} {
+				item, _ := out[field].(map[string]any)
+				if id, _ = item["run_id"].(string); id != "" {
+					break
+				}
+			}
+		}
+		if id == "" {
+			probe = "state_status"
+		} else {
+			args["source"], args["run_id"] = in["source"], id
+		}
 	case "admin_archive_status":
 		args["session_id"] = in["session_id"]
 		args["scope"] = in["scope"]

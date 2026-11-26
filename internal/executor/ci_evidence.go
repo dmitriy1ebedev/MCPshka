@@ -74,8 +74,8 @@ func PrepareCIEvidence(ctx context.Context, bootstrapID, repo, commit string, ev
 			return nil, ErrHold
 		}
 		if ev.Provider == "distributed" {
-			p, e := distributedci.LoadPlan(ctx, repo, commit)
-			if e != nil || ev.Distributed == nil || ev.Distributed.Verify(p) != nil {
+			p, e := distributedci.LoadPublicPlan(ctx, repo, commit)
+			if e != nil || p.Digest == "" || ev.Distributed == nil || ev.Distributed.Verify(p) != nil {
 				return nil, ErrHold
 			}
 		} else if ev.Provider == cievidence.GitVerseProvider {

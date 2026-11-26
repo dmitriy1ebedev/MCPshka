@@ -106,6 +106,10 @@ func Export(ctx context.Context, repo, commit, dest string, rules []Rule) (Manif
 		return Manifest{}, fmt.Errorf("%s: %w", ConfigPath, err)
 	}
 	rules = normalize(rules)
+	version := ""
+	if v, err := gitOut(ctx, repo, "show", commit+":VERSION"); err == nil {
+		version = strings.TrimSpace(string(v))
+	}
 	archive, err := gitOut(ctx, repo, "archive", "--format=tar", commit)
 	if err != nil {
 		return Manifest{}, err
@@ -165,6 +169,9 @@ func Export(ctx context.Context, repo, commit, dest string, rules []Rule) (Manif
 			data = out
 			m.Replaced++
 		}
+		if rel == "README.md" || rel == "README.ru.md" {
+			data = VersionBadge(data, version)
+		}
 		mode := int64(0o644)
 		if h.Mode&0o111 != 0 {
 			mode = 0o755
@@ -187,18 +194,23 @@ func Export(ctx context.Context, repo, commit, dest string, rules []Rule) (Manif
 		fmt.Fprintf(d, "%o %s %s\n", e.mode, e.sum, e.rel)
 	}
 	m.Files, m.Digest = len(entries), hex.EncodeToString(d.Sum(nil))
-	if m.Audit, err = Audit(dest, 5000); err != nil {
+	if m.Audit, m.Blocking, err = auditExport(dest, rules, cfg.Fixtures); err != nil {
 		os.RemoveAll(dest)
-		return Manifest{}, err
-	}
-	if m.Blocking, err = blocking(dest, m.Audit, rules, cfg.Fixtures); err != nil || len(m.Blocking) > 0 {
-		os.RemoveAll(dest)
-		if err == nil {
-			err = ErrBlocked
-		}
 		return m, err
 	}
 	return m, nil
+}
+
+func auditExport(dest string, rules []Rule, fixtures []string) (Report, []Finding, error) {
+	rep, err := Audit(dest, 5000)
+	if err != nil {
+		return rep, nil, err
+	}
+	findings, err := blocking(dest, rep, rules, fixtures)
+	if err == nil && len(findings) != 0 {
+		err = ErrBlocked
+	}
+	return rep, findings, err
 }
 
 // ErrBlocked: the export still carries a secret or an owner identifier.
@@ -308,12 +320,24 @@ func isWord(c byte) bool {
 }
 
 func gitOut(ctx context.Context, repo string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repo, "-c", "core.quotePath=off"}, args...)...)
+	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-replace-objects", "-C", repo, "-c", "safe.directory=" + repo, "-c", "core.quotePath=off"}, args...)...)
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=/nonexistent", "LANG=C", "GIT_CONFIG_NOSYSTEM=1"}
-	var out, errb bytes.Buffer
+	out, errb := limitedOutput{limit: 64 << 20}, limitedOutput{limit: 4 << 10}
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("git %s: %s", args[0], strings.TrimSpace(errb.String()))
+		return nil, fmt.Errorf("git %s: %s", args[0], strings.TrimSpace(errb.buf.String()))
 	}
-	return out.Bytes(), nil
+	return out.buf.Bytes(), nil
+}
+
+type limitedOutput struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (b *limitedOutput) Write(p []byte) (int, error) {
+	if b.buf.Len()+len(p) > b.limit {
+		return 0, errors.New("Git export exceeds output budget")
+	}
+	return b.buf.Write(p)
 }

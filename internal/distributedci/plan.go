@@ -53,6 +53,7 @@ var pkgRE = regexp.MustCompile("^[A-Za-z0-9][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_.-]+)*
 type Plan struct {
 	Commit   string     `json:"commit"`
 	Tree     string     `json:"source_tree"`
+	Digest   string     `json:"export_digest,omitempty"`
 	Snapshot string     `json:"snapshot"`
 	Packages []string   `json:"packages"`
 	Shards   [][]string `json:"shards"`
@@ -173,7 +174,7 @@ func (p Plan) Check(o Observation) error {
 	return nil
 }
 func (r Report) Verify(p Plan) error {
-	if r.Schema != Schema || r.Plan.Hash() != p.Hash() || r.State != "PASS" || len(r.Shards) != len(p.Shards) {
+	if p.Digest != "" && !digestRE.MatchString(p.Digest) || r.Schema != Schema || r.Plan.Hash() != p.Hash() || r.State != "PASS" || len(r.Shards) != len(p.Shards) {
 		return errors.New("incomplete distributed evidence")
 	}
 	all := []string{}

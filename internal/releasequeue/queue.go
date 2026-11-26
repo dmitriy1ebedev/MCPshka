@@ -24,7 +24,9 @@ import (
 	"mcpshka/internal/agents"
 	"mcpshka/internal/audit"
 	"mcpshka/internal/authn"
+	"mcpshka/internal/failure"
 	"mcpshka/internal/handoff"
+	"mcpshka/internal/integrationqueue"
 	"mcpshka/internal/memory"
 	"mcpshka/internal/notify"
 	"mcpshka/internal/statestore"
@@ -56,7 +58,6 @@ const (
 
 var Running atomic.Bool
 var branchRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,100}$`)
-var shipItemRe = regexp.MustCompile(`^ship-[0-9a-f]{12}(-[A-Za-z0-9]{1,32})?$`)
 
 type Input struct {
 	Action         string `json:"action,omitempty" jsonschema:"enqueue (default) or cancel."`
@@ -163,6 +164,12 @@ func truncateRunes(s string, n int) string {
 }
 
 func Mutate(db *statestore.DB, identity authn.Identity, in Input, now time.Time) (View, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return mutate(ctx, db, identity, in, now, integrationqueue.NewRuntime(db, nil).FindShip)
+}
+
+func mutate(ctx context.Context, db *statestore.DB, identity authn.Identity, in Input, now time.Time, lookup func(context.Context, string, string, string) (integrationqueue.Request, string, error)) (View, error) {
 	if db == nil {
 		return View{}, errors.New("state store unavailable: HOLD")
 	}
@@ -205,14 +212,20 @@ func Mutate(db *statestore.DB, identity authn.Identity, in Input, now time.Time)
 			return old.view(), errors.New("this version is already being released from another commit: cancel it first")
 		}
 	}
-	ship := "ship-" + in.Commit[:12]
+	ship := integrationqueue.DefaultShipID(in.Commit)
 	if in.ShipItem != "" {
-		// A hand-made ship of this commit (another CI site, say) is continued:
-		// re-shipping a commit already on main fences as UNKNOWN.
-		if !shipItemRe.MatchString(in.ShipItem) || !strings.HasPrefix(in.ShipItem, ship) {
-			return View{}, errors.New("ship_item must be the integration_ship id of this commit (ship-<commit[:12]>[-suffix])")
+		item, suggested, err := lookup(ctx, Repo, in.ShipItem, in.Commit)
+		if err != nil {
+			return View{}, failure.Rejected("SHIP_LOOKUP_FAILED", "release_queue", "existing ship item could not be verified", err)
 		}
-		ship = in.ShipItem
+		if item.ID == "" {
+			refused := failure.Rejected("SHIP_ITEM_MISMATCH", "release_queue", "ship_item must identify an existing main integration item of this commit", nil)
+			if suggested != "" {
+				refused.NextSafeAction = failure.Action{Tool: "release_apply", Arguments: map[string]any{"action": "queue", "version": in.Version, "branch": in.Branch, "commit": in.Commit, "store_id": in.StoreID, "ship_item": suggested, "evidence": in.Evidence, "idempotency_key": in.IdempotencyKey}}
+			}
+			return View{}, refused
+		}
+		ship, in.Branch = item.ID, item.Branch
 	}
 	switch in.Evidence {
 	case "":
@@ -406,7 +419,7 @@ func (w *Watcher) step(ctx context.Context, it *Item) {
 			}
 			it.ApprovalID = str(a, "id")
 			it.Detail, it.UpdatedAt = "approved in the Face ID window", now
-		case stage == "TEST_FAILED" || stage == "CI_FAILED" || stage == "TEST_LOST" || stage == "TEST_FENCE_UNVERIFIED":
+		case stage == "ARCHLINT_FAILED" || stage == "TEST_FAILED" || stage == "CI_FAILED" || stage == "TEST_LOST" || stage == "TEST_FENCE_UNVERIFIED":
 			it.move(now, "FAILED", stage+": "+str(out, "detail"))
 		default:
 			it.Detail, it.UpdatedAt = stage+": "+str(out, "detail"), now

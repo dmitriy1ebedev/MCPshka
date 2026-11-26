@@ -57,7 +57,7 @@ func TestNightReviewAppendsOnlyOnChange(t *testing.T) {
 	}
 	r := night(18, []Finding{{Kind: "service", Subject: "smbd.service"}})
 	got, _ = s.Get(i.ID)
-	if r.Cards[0].Verdict != NightStill || r.Cards[0].Since != "18.11" || !strings.Contains(got.Body, "18.11:** симптом держится") {
+	if r.State != "completed" || r.Processed != 1 || r.Cards[0].Verdict != NightStill || r.Cards[0].Since != "18.11" || !strings.Contains(got.Body, "18.11:** симптом держится") {
 		t.Fatalf("%+v\n%s", r.Cards, got.Body)
 	}
 	line := NightBrief(ReadNight(NightPath(filepath.Join(filepath.Dir(s.path), "issues.json"))), time.Date(2026, 11, 18, 9, 0, 0, 0, time.Local))
@@ -107,5 +107,13 @@ func TestNightDue(t *testing.T) {
 				t.Fatalf("NightDue(%v, %v, %v) = %v, want %v", c.now, c.last, c.load, got, c.want)
 			}
 		})
+	}
+}
+
+func TestEmptyNightReviewIsIdle(t *testing.T) {
+	s := NewStore(filepath.Join(t.TempDir(), "issues.json"))
+	out, err := s.NightReview(NightInput{Now: time.Now()})
+	if err != nil || out.State != "idle" || out.Effect || out.Processed != 0 {
+		t.Fatal(out, err)
 	}
 }

@@ -119,7 +119,30 @@ func (g *Gateway) Converse(ctx context.Context, purpose string, msgs []Message, 
 			break
 		}
 	}
-	return Turn{}, fmt.Errorf("LLM no endpoint answered: %s", strings.Join(failures, "; "))
+	return Turn{}, fmt.Errorf("LLM no endpoint answered: %s%s", strings.Join(failures, "; "), otherBrains(c.endpoints(), eps))
+}
+
+// otherBrains names the brain models of endpoints this request did not try.
+// Helpers run only on the owner's request (26.11), so the gateway never
+// switches models itself: the chat's own AI decides whether to ask another.
+func otherBrains(all, tried []Config) string {
+	var names []string
+	for _, ep := range all {
+		if ep.BrainModel == "" {
+			continue
+		}
+		seen := false
+		for _, t := range tried {
+			seen = seen || t.BaseURL == ep.BaseURL
+		}
+		if !seen {
+			names = append(names, ep.BrainModel)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return "; other configured models: " + strings.Join(names, ", ") + " (model=<name>, only if the owner asked for a helper)"
 }
 
 func (g *Gateway) converse(ctx context.Context, c Config, key, model string, msgs []Message, funcs []Function) (Turn, error) {

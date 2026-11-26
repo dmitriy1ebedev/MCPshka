@@ -161,6 +161,7 @@ git diff --check
 ! grep -Rqs --exclude-dir=.git --exclude-dir=bin --exclude=migrate-from-remoutka.sh -E 'MSPSHKA|MSPshka|mspshka' .
 mkdir -p bin
 rm -f bin/remoutka bin/mspshka bin/mcpshka
+sh packaging/native/build-runner-assets.sh
 go build -trimpath -o bin/mcpshka ./cmd/mcpshka
 [[ "$(python3 -I -S /usr/local/libexec/mcpshka-release-probe.py "$SOURCE_BIN" version)" == "mcpshka 0.1.a.18" ]]
 

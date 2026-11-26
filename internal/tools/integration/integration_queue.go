@@ -57,7 +57,7 @@ func IsMutation(name string, input map[string]any) bool {
 	if name == "integration_worker_launch" || name == "integration_worker_fence" || name == "integration_worker_recover" || name == "integration_worker_abort" {
 		return true
 	}
-	if name == "integration_enqueue" || name == "integration_cancel" || name == "integration_recover" {
+	if name == "integration_import_github_main" || name == "integration_enqueue" || name == "integration_cancel" || name == "integration_recover" {
 		return true
 	}
 	if name != "exec_start" {

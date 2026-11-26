@@ -5,7 +5,6 @@ docs/history/test_rootledger_reap.py
 internal/officedocs/office.py
 internal/rootbroker/codex-bridge.py
 internal/rootbroker/codex_session_client.py
-internal/runnerhub/agent.py
 packaging/ci/shard.py
 packaging/ci/test_distributed.py
 packaging/ci/test_project_distributed.py
@@ -15,8 +14,6 @@ packaging/cloud/__init__.py
 packaging/cloud/source_digest.py
 packaging/cloud/test_dispatch.py
 packaging/cloud/test_source_digest.py
-packaging/forges/extra_forge.py
-packaging/forges/test_extra_forge.py
 packaging/gitverse/snapshot_immutable.py
 packaging/gitverse/test_snapshot_immutable.py
 packaging/__init__.py
@@ -34,7 +31,6 @@ packaging/moshub/test_snapshot.py
 packaging/native/cloud-results.py
 packaging/native/codex-bridge.py
 packaging/native/coordinated-upgrade.py
-packaging/native/diag-traffic-route-observe.py
 packaging/native/migrate-auth-registry.py
 packaging/native/oob.py
 packaging/native/release-artifact.py
@@ -51,7 +47,6 @@ packaging/native/test_codex_session_client.py
 packaging/native/test_coordinated_upgrade.py
 packaging/native/test_deploy_health.py
 packaging/native/test_deployment_fences.py
-packaging/native/test_diag_traffic_route.py
 packaging/native/test_install_broker.py
 packaging/native/test_migrate_auth_registry.py
 packaging/native/test_passkey_portal.py

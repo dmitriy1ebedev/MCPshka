@@ -129,35 +129,6 @@ func TestDockerValidation(t *testing.T) {
 	}
 }
 
-func TestDiagTrafficValidation(t *testing.T) {
-	ok := [][]string{
-		{"start", "--client", "192.168.77.40", "--mac", "02:00:00:00:00:46", "--duration", "300", "--root", diagTrafficRunsRoot},
-		{"status", "--run", "20261007T200000Z-deadbeef", "--root", diagTrafficRunsRoot, "--json"},
-		{"report", "--run", "20261007T200000Z-deadbeef", "--root", diagTrafficRunsRoot, "--json"},
-		{"stop", "--run", "20261007T200000Z-deadbeef", "--root", diagTrafficRunsRoot, "--json"},
-	}
-	for _, args := range ok {
-		if err := validateDiagTraffic(args); err != nil {
-			t.Fatalf("accepted diag traffic form rejected %v: %v", args, err)
-		}
-	}
-	bad := [][]string{
-		{"start", "--client", "8.8.8.8", "--mac", "02:00:00:00:00:46", "--duration", "300", "--root", diagTrafficRunsRoot},
-		{"start", "--client", "192.168.77.40", "--mac", "00:00:00:00:00:00", "--duration", "300", "--root", diagTrafficRunsRoot},
-		{"start", "--client", "192.168.77.40", "--mac", "02:00:00:00:00:46", "--duration", "301", "--root", diagTrafficRunsRoot},
-		{"stop", "--run", "../escape", "--root", diagTrafficRunsRoot, "--json"},
-		{"start", "--client", "192.168.77.40", "--mac", "02:00:00:00:00:46", "--duration", "300", "--root", "/tmp"},
-		{"status", "--run", "../escape", "--root", diagTrafficRunsRoot, "--json"},
-		{"report", "--run", "good-run", "--root", "/tmp", "--json"},
-		{"start", "--client", "192.168.77.40"},
-	}
-	for _, args := range bad {
-		if err := validateDiagTraffic(args); err == nil {
-			t.Fatalf("unsafe diag traffic form accepted: %v", args)
-		}
-	}
-}
-
 func TestAuthorizePeerRequiresMainPIDForServiceUID(t *testing.T) {
 	const serviceUID uint32 = 994
 	if err := authorizePeer(&syscall.Ucred{Uid: 0, Pid: 999}, serviceUID, nil); err != nil {

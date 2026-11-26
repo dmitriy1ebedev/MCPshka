@@ -134,12 +134,16 @@ func registerCapabilityTools(r *toolRegistry, policy any) {
 		out := CapabilityBootstrap{ServerVersion: Version, BuildSHA256: build, Revision: revision, RegisteredCount: len(view.catalog), Categories: map[string]int{}, ClientExposed: "unknown", BackendHealthy: "unknown", ProviderAuthenticated: "unknown", Instructions: capabilityInstructions, CapturedAt: time.Now().UTC().Format(time.RFC3339)}
 		out.CatalogSHA256 = catalogdigest.Hash(view.catalog)
 		out.Readiness = map[string]int{}
-		for _, t := range view.catalog {
+		var observed []CapabilityReadiness
+		for _, name := range view.names() {
+			t := view.catalog[name]
 			if r.capabilityAvailable(ctx, t) {
 				out.AuthorizedCount++
 				category, _, _ := strings.Cut(t.Name, "_")
 				out.Categories[category]++
-				out.Readiness[r.cachedReadiness(t.Name).State]++
+				c := r.cachedReadiness(t.Name)
+				out.Readiness[c.State]++
+				observed = append(observed, c)
 			}
 		}
 		inventory, err := r.deniedInventorySnapshot(ctx, CapabilityInventoryInput{Limit: 4}, view)
@@ -151,6 +155,7 @@ func registerCapabilityTools(r *toolRegistry, policy any) {
 			out.DeniedInventoryTool = "capability_inventory"
 		}
 		out.BackendHealthy = bootstrapBackendHealthy(out.Readiness)
+		out.SetBootstrapReadiness(observed)
 		if r.clients != nil && req != nil {
 			out.ClientSnapshot = r.clients.Hint(req.Session, view.exposedNames(), view.schemas())
 		}
@@ -199,7 +204,6 @@ func registerCapabilityTools(r *toolRegistry, policy any) {
 	registerToolInvoke(r)
 	registerCodeRun(r)
 	registerGatewayTools(r)
-	registerIntegrationShip(r)
 	r.catalogMu.Lock()
 	r.catalogDirty = true // hashed on first snapshot, not on every server build
 	r.catalogMu.Unlock()

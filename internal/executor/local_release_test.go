@@ -10,7 +10,10 @@ import (
 )
 
 func TestLocalReleaseProfileFixedOfflinePair(t *testing.T) {
-	command := []string{"/bin/sh", "-ec", "go version > /scratch/toolchain.txt\ngo build -p 2 -trimpath -buildvcs=false -o /scratch/controller ./cmd/mcpshka\ngo build -p 2 -trimpath -buildvcs=false -o /scratch/broker ./cmd/mcpshka-broker"}
+	command := []string{"/bin/sh", "-ec", localBuildScript}
+	if !strings.Contains(localBuildScript, "build-runner-assets.sh /scratch/runner-assets") {
+		t.Fatal("paired build omits downloadable runners")
+	}
 	s := RunSpec{Profile: "local-release-v1", Command: command, WorkspaceDevice: 1, WorkspaceInode: 1}
 	if err := s.validate(); err != nil {
 		t.Fatal("fixed paired build rejected", err)

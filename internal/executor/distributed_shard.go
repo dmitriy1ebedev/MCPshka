@@ -15,10 +15,14 @@ func shardPackageValid(pkg string) bool {
 	return ok && distributedci.ValidShardIndex(n)
 }
 func DistributedShardCommand(p distributedci.Plan, n int) []string {
-	return []string{"go", "run", "./cmd/ci-shard", strconv.Itoa(n), "module", p.Commit, p.Tree, p.Snapshot, p.Hash(), "1"}
+	argv := []string{"go", "run", "./cmd/ci-shard", strconv.Itoa(n), "module", p.Commit, p.Tree, p.Snapshot, p.Hash(), "1"}
+	if p.Digest != "" {
+		argv = append(argv, p.Digest)
+	}
+	return argv
 }
 func distributedShardCommandMatches(a []string) bool {
-	return len(a) == 10 && strings.Join(a[:3], " ") == "go run ./cmd/ci-shard" && distributedci.ValidShardIndex(a[3]) && a[4] == "module" && commitPattern.MatchString(a[5]) && commitPattern.MatchString(a[6]) && commitPattern.MatchString(a[7]) && digestPattern.MatchString(a[8]) && a[9] == "1"
+	return (len(a) == 10 || len(a) == 11 && digestPattern.MatchString(a[10])) && strings.Join(a[:3], " ") == "go run ./cmd/ci-shard" && distributedci.ValidShardIndex(a[3]) && a[4] == "module" && commitPattern.MatchString(a[5]) && commitPattern.MatchString(a[6]) && commitPattern.MatchString(a[7]) && digestPattern.MatchString(a[8]) && a[9] == "1"
 }
 func PrepareDistributedShard(ctx context.Context, bootstrap, repo string, p distributedci.Plan, n int) (Manifest, error) {
 	if n < 0 || n >= len(p.Shards) {

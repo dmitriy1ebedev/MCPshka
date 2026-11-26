@@ -10,11 +10,11 @@ import (
 
 // Root preparation binds only the existing service-controlled token files.
 // No token enters the report, command arguments or journal.
-func DistributedEvidenceProviders(repo string) []distributedci.Provider {
+func DistributedEvidenceProviders(repo string, plans ...distributedci.Plan) []distributedci.Provider {
 	if os.Geteuid() != 0 {
 		return nil
 	}
-	out := DistributedProviders(repo)
+	out := DistributedProviders(repo, plans...)
 	for _, p := range out {
 		p.(*CIProvider).Client.token = func(site Site) (string, error) {
 			path := "/var/lib/mcpshka/" + string(site) + "/api_token"

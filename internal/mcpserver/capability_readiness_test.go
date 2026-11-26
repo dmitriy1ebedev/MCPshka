@@ -1,7 +1,9 @@
 package mcpserver
 
 import (
+	"fmt"
 	"mcpshka/internal/readiness"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +20,28 @@ func TestBootstrapBackendHealthy(t *testing.T) {
 		if got := bootstrapBackendHealthy(c.counts); got != c.want {
 			t.Errorf("%v: got %s want %s", c.counts, got, c.want)
 		}
+	}
+}
+
+func TestBootstrapReadinessReportsFirstBackendBlocker(t *testing.T) {
+	out := CapabilityBootstrap{BackendHealthy: "false", RegisteredCount: 333}
+	out.SetBootstrapReadiness([]CapabilityReadiness{
+		{Name: "a_pending", State: readiness.Preflight, Reason: "no evidence"},
+		{Name: "b_blocked", State: readiness.Blocked, Reason: "required worker unavailable"},
+		{Name: "c_degraded", State: readiness.Degraded, Reason: "cache unavailable"},
+	})
+	if out.Ready || out.Blocker != "b_blocked: required worker unavailable" || out.NextSafeAction == nil || out.NextSafeAction.Tool != "capability_selftest" {
+		t.Fatalf("%+v", out)
+	}
+	c := fullCatalogClient(t)
+	boot := catalogCall(t, c, "capabilities_bootstrap", map[string]any{})
+	ready, ok := boot["ready"].(bool)
+	if !ok || ready != (boot["backend_healthy"] == "true") || !ready && (boot["blocker"] == nil || boot["next_safe_action"] == nil) {
+		t.Fatalf("inconsistent wire readiness: %v", boot)
+	}
+	out2 := catalogCall(t, c, "tool_resolve", map[string]any{"goal": "git_push"})
+	if !strings.Contains(fmt.Sprint(out2["candidates"]), "git_provider_push") {
+		t.Fatalf("git_push did not resolve: %v", out2)
 	}
 }
 

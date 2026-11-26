@@ -3,6 +3,7 @@ package capabilities
 import (
 	"mcpshka/internal/agentguide"
 	"mcpshka/internal/catalogdigest"
+	"mcpshka/internal/failure"
 	"mcpshka/internal/toolcontract"
 )
 
@@ -21,6 +22,9 @@ type CapabilityBootstrap struct {
 	Categories          map[string]int     `json:"categories"`
 	ClientExposed       string             `json:"client_exposed"`
 	BackendHealthy      string             `json:"backend_healthy"`
+	Ready               bool               `json:"ready"`
+	Blocker             string             `json:"blocker,omitempty"`
+	NextSafeAction      *failure.Action    `json:"next_safe_action,omitempty"`
 	// Readiness counts authorized capabilities per readiness state from
 	// existing evidence; capability_selftest refreshes it.
 	Readiness             map[string]int `json:"readiness,omitempty"`

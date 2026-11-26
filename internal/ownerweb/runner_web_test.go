@@ -30,8 +30,11 @@ func TestRunnerRoutes(t *testing.T) {
 	Runners = runnerhub.New(t.TempDir())
 	t.Cleanup(func() { Runners = old })
 
-	if rr := runnerCall(http.MethodGet, "/runner/agent.py", "", ""); rr.Code != 200 || !strings.Contains(rr.Body.String(), "mcpshka-runner") {
-		t.Fatalf("agent.py: %d", rr.Code)
+	if rr := runnerCall(http.MethodGet, "/runner/setup", "", ""); rr.Code != 200 || !strings.Contains(rr.Body.String(), "/runner/download/linux-") {
+		t.Fatalf("setup: %d", rr.Code)
+	}
+	if rr := runnerCall(http.MethodGet, "/runner/download/linux-386", "", ""); rr.Code != 404 {
+		t.Fatalf("unsupported runner download: %d", rr.Code)
 	}
 	if rr := post(t, p, "/connections/api/runner-token", `{}`, nil); rr.Code != http.StatusUnauthorized {
 		t.Fatalf("token without Face ID: %d", rr.Code)

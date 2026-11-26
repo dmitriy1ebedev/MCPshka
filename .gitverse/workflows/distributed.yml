@@ -1,5 +1,7 @@
 name: MCPshka distributed CI
 on:
+  push:
+    branches: ['ci/**']
   workflow_dispatch:
     inputs:
       shard:
@@ -23,7 +25,26 @@ concurrency:
   group: distributed-${{ gitverse.ref }}-${{ inputs.shard }}
   cancel-in-progress: false
 jobs:
+  public-shard:
+    if: gitverse.event_name == 'push'
+    name: distributed-shard
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      CI_PUBLIC_REF: ${{ gitverse.ref }}
+      CI_RUN_ID: ${{ gitverse.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Vet and test the exported shard
+        run: sh packaging/ci/distributed_shard.sh gitverse
   shard:
+    if: gitverse.event_name == 'workflow_dispatch'
     name: distributed-shard-${{ inputs.shard }}
     runs-on: ubuntu-latest
     timeout-minutes: 50

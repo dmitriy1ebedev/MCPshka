@@ -22,7 +22,7 @@ const (
 	// APIRepository is where the GitHub check runs live: the private CI
 	// repository (0.19.1). Repository stays the receipts' identity label.
 	APIRepository = "dmitriy1ebedev/mcpshka-ci"
-	APIBase    = "https://api.github.com"
+	APIBase       = "https://api.github.com"
 	// TokenPath is root-only; the preparation unit binds it read-only.
 	TokenPath = "/root/.config/gh-mcpshka.token"
 	maxBody   = 4 << 20
@@ -57,10 +57,14 @@ type Evidence struct {
 // Verify accepts only a complete, all-success record for this commit and tree.
 func (e Evidence) Verify(commit, tree string) error {
 	if e.Provider == "distributed" {
-		if e.Schema != Schema || e.Repository != "distributed:mcpshka" || e.HeadSHA != commit || e.Tree != tree || !sha.MatchString(commit) || !sha.MatchString(tree) || e.Distributed == nil || e.CheckedAt.IsZero() || e.Distributed.Plan.Commit != commit || e.Distributed.Plan.Tree != tree || e.BaseSHA != e.Distributed.Plan.Snapshot {
+		if e.Schema != Schema || e.Repository != "distributed:mcpshka" || e.HeadSHA != commit || e.Tree != tree || !sha.MatchString(commit) || !sha.MatchString(tree) || e.Distributed == nil || e.CheckedAt.IsZero() {
 			return ErrHold
 		}
-		return e.Distributed.Verify(e.Distributed.Plan)
+		p := e.Distributed.Plan
+		if p.Commit != commit || !sha.MatchString(p.Tree) || p.Digest == "" && p.Tree != tree || e.BaseSHA != p.Snapshot {
+			return ErrHold
+		}
+		return e.Distributed.Verify(p)
 	}
 	if e.Distributed != nil {
 		return ErrHold

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"strings"
 	"syscall"
 	"unicode/utf8"
@@ -22,23 +21,12 @@ const MaxBytes = 512 * 1024
 const MaxPhases = 100
 const MaxChecks = 1000
 
-// "## P0 — Title" (MCPshka, DIAG) and "## P0: Title" (Lane). roadmap_next
-// already read both; the sealed path rejected the colon form as "no roadmap
-// phases", so every Lane roadmap_run stopped UNKNOWN at its test gate.
-var heading = regexp.MustCompile(`^## (P[0-9]{1,2})(?: [—-]|:) (.+)$`)
-
-// Without a single "## P" phase the roadmap names its phases its own way:
-// Lane 1.3.0 writes "### Приоритет L0 — Title". Any short letter+digit ID at
-// level 2–3 counts then, except P: a "### P0" is a mistyped P-phase and stays
-// rejected. P-roadmaps never reach this, so their Next is unchanged.
-var anyHeading = regexp.MustCompile(`^#{2,3} (?:Приоритет |Фаза |Phase )?([A-OQ-Z][A-Z]{0,2}[0-9]{1,2}[a-z]?|P[A-Z]{1,2}[0-9]{1,2}[a-z]?)(?: [—-]|:) (.+)$`)
-var checkbox = regexp.MustCompile(`^- \[([xX ])\] \S`)
-
 var ErrPinMismatch = errors.New("roadmap digest changed: HOLD for reconciliation")
 
 type Phase struct {
 	ID           string `json:"id"`
 	Title        string `json:"title"`
+	Superseded   int    `json:"superseded,omitempty"`
 	Completed    int    `json:"completed"`
 	Total        int    `json:"total"`
 	DeclaredDone bool   `json:"declared_done"`
@@ -81,50 +69,20 @@ func Headroom(path string) (Room, error) {
 type Heading struct {
 	ID, Title   string
 	Line, Level int
+	primary     bool
 }
 
-// Headings lists the phase headings in the style Parse settles on ("## P0"
-// phases, else any short letter+digit id), fenced code skipped.
+// Headings lists recognized roadmap sections, skipping fenced examples.
 func Headings(content string) []Heading {
-	for _, re := range []*regexp.Regexp{heading, anyHeading} {
-		var out []Heading
-		inFence := false
-		for i, raw := range strings.Split(content, "\n") {
-			line := strings.TrimSuffix(raw, "\r")
-			if strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {
-				inFence = !inFence
-			} else if m := re.FindStringSubmatch(line); m != nil && !inFence {
-				out = append(out, Heading{ID: m[1], Title: strings.TrimSpace(m[2]), Line: i, Level: len(line) - len(strings.TrimLeft(line, "#"))})
-			}
-		}
-		if len(out) > 0 {
-			return out
-		}
-	}
-	return nil
+	lines, _ := ContentLines(content)
+	return headings(lines)
 }
 
-// ItemHeadings is Headings plus, in a "## P" roadmap, the cross-cutting
-// stream sections ("## S5 — …", "## C2 — …"): their checkboxes are items
-// that roadmap_close must find (MCP-278), but they never count as phases.
-func ItemHeadings(content string) []Heading {
+func headings(lines []string) []Heading {
 	var out []Heading
-	inFence := false
-	for i, raw := range strings.Split(content, "\n") {
-		line := strings.TrimSuffix(raw, "\r")
-		if strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {
-			inFence = !inFence
-			continue
-		}
-		if inFence {
-			continue
-		}
-		m := heading.FindStringSubmatch(line)
-		if m == nil {
-			m = anyHeading.FindStringSubmatch(line)
-		}
-		if m != nil {
-			out = append(out, Heading{ID: m[1], Title: strings.TrimSpace(m[2]), Line: i, Level: len(line) - len(strings.TrimLeft(line, "#"))})
+	for i, line := range lines {
+		if m, primary := sectionHeading(line); m != nil {
+			out = append(out, Heading{ID: m[1], Title: strings.TrimSpace(m[2]), Line: i, Level: HeadingLevel(line), primary: primary})
 		}
 	}
 	return out
@@ -172,75 +130,69 @@ func load(path, expectedSHA256 string) (Snapshot, string, error) {
 // Parse keeps interpretation deliberately narrow. Unknown or ambiguous data
 // fail closed rather than selecting or marking roadmap phases automatically.
 func Parse(content, sha string) (Snapshot, error) {
-	snap, err := parseWith(content, sha, heading)
-	if err != nil && err.Error() == "no roadmap phases" {
-		return parseWith(content, sha, anyHeading)
-	}
-	return snap, err
-}
-
-func parseWith(content, sha string, heading *regexp.Regexp) (Snapshot, error) {
 	if len(content) > MaxBytes {
 		return Snapshot{}, errors.New("roadmap exceeds size limit")
 	}
 	if !utf8.ValidString(content) || !utf8.ValidString(sha) {
 		return Snapshot{}, errors.New("roadmap evidence must be valid UTF-8")
 	}
-	result := Snapshot{SHA256: sha, Phases: make([]Phase, 0, 24)}
-	seen := make(map[string]bool)
-	inFence := false
-	checks := 0
-	for _, raw := range strings.Split(content, "\n") {
-		line := strings.TrimSuffix(raw, "\r")
-		if strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {
-			inFence = !inFence
-			continue
-		}
-		if inFence {
-			continue
-		}
-		if m := heading.FindStringSubmatch(line); m != nil {
-			if seen[m[1]] {
-				return Snapshot{}, fmt.Errorf("duplicate roadmap phase %s", m[1])
-			}
-			if len(result.Phases) >= MaxPhases {
-				return Snapshot{}, errors.New("too many roadmap phases")
-			}
-			seen[m[1]] = true
-			title := strings.TrimSpace(m[2])
-			if len(title) > 320 {
-				return Snapshot{}, errors.New("phase title too long")
-			}
-			declared := strings.Contains(title, " — DONE") || strings.HasSuffix(title, " DONE")
-			result.Phases = append(result.Phases, Phase{ID: m[1], Title: title, DeclaredDone: declared})
-			continue
-		}
-		if len(result.Phases) > 0 && strings.Contains(line, "DEFERRED") {
-			result.Phases[len(result.Phases)-1].Deferred = true
-		}
-		if len(result.Phases) > 0 && checkbox.MatchString(line) {
-			checks++
-			if checks > MaxChecks {
-				return Snapshot{}, errors.New("too many roadmap checkboxes")
-			}
-			n := len(result.Phases) - 1
-			result.Phases[n].Total++
-			if line[3] == 'x' || line[3] == 'X' {
-				result.Phases[n].Completed++
-			}
-		}
-	}
+	lines, inFence := ContentLines(content)
 	if inFence {
 		return Snapshot{}, errors.New("unterminated fenced code")
 	}
-	if len(result.Phases) == 0 {
+	heads := headings(lines)
+	if len(heads) == 0 {
 		return Snapshot{}, errors.New("no roadmap phases")
 	}
-	for _, phase := range result.Phases {
-		if !phase.DeclaredDone && !phase.Deferred && (phase.Total == 0 || phase.Completed < phase.Total) {
-			p := phase
-			result.Next = &p
-			break
+	if len(heads) > MaxPhases {
+		return Snapshot{}, errors.New("too many roadmap phases")
+	}
+	result := Snapshot{SHA256: sha, Phases: make([]Phase, 0, len(heads))}
+	seen := make(map[string]bool)
+	checks := 0
+	for _, h := range heads {
+		if seen[h.ID] {
+			return Snapshot{}, fmt.Errorf("duplicate roadmap phase %s", h.ID)
+		}
+		seen[h.ID] = true
+		if len(h.Title) > 320 {
+			return Snapshot{}, errors.New("phase title too long")
+		}
+		phase := Phase{ID: h.ID, Title: h.Title, DeclaredDone: strings.Contains(h.Title, " — DONE") || strings.HasSuffix(h.Title, " DONE")}
+		for _, line := range lines[h.Line+1:] {
+			if level := HeadingLevel(line); level > 0 && level <= h.Level {
+				break
+			}
+			if strings.Contains(line, "DEFERRED") {
+				phase.Deferred = true
+			}
+			if m := Checkbox.FindStringSubmatch(line); m != nil && strings.TrimSpace(m[4]) != "" {
+				checks++
+				if checks > MaxChecks {
+					return Snapshot{}, errors.New("too many roadmap checkboxes")
+				}
+				phase.Total++
+				if m[2] == "x" || m[2] == "X" {
+					phase.Completed++
+				} else if Superseded(m[2], m[4]) != "" {
+					phase.Superseded++
+				}
+			}
+		}
+		result.Phases = append(result.Phases, phase)
+	}
+	// Keep existing P-phase priority. Once those are finished, select the
+	// first stream with unfinished work, then sections without a checklist.
+	for rank := range 3 {
+		for i, phase := range result.Phases {
+			primary := heads[i].primary
+			if (rank == 0 && !primary) || (rank == 1 && (primary || phase.Total == 0)) || (rank == 2 && (primary || phase.Total != 0)) {
+				continue
+			}
+			if !phase.DeclaredDone && !phase.Deferred && (phase.Total == 0 || phase.Completed+phase.Superseded < phase.Total) {
+				result.Next = &result.Phases[i]
+				return result, nil
+			}
 		}
 	}
 	return result, nil

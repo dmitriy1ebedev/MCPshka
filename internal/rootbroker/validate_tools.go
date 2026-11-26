@@ -1,88 +1,15 @@
 package rootbroker
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"mcpshka/internal/transientunit"
-	"net"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"syscall"
 )
 
 var validBareVersion = transientunit.ValidVersion
-
-func validateDiagTraffic(args []string) error {
-	if len(args) == 0 {
-		return errors.New("missing diag traffic operation")
-	}
-	switch args[0] {
-	case "start":
-		if len(args) != 9 ||
-			args[1] != "--client" ||
-			args[3] != "--mac" ||
-			args[5] != "--duration" ||
-			args[7] != "--root" ||
-			filepath.Clean(args[8]) != diagTrafficRunsRoot {
-			return errors.New("unsupported diag traffic start form")
-		}
-		if strings.Contains(args[2], ":") {
-			return errors.New("diag traffic client must use dotted IPv4 form")
-		}
-		ip := net.ParseIP(args[2])
-		if ip == nil || ip.To4() == nil || !ip.IsPrivate() || ip.IsLoopback() || ip.IsMulticast() || ip.IsUnspecified() {
-			return errors.New("diag traffic client must be private unicast IPv4")
-		}
-		if len(args[4]) != 17 || strings.Count(args[4], ":") != 5 {
-			return errors.New("invalid diag traffic MAC")
-		}
-		mac, err := net.ParseMAC(args[4])
-		if err != nil || len(mac) != 6 || mac[0]&1 != 0 || bytes.Count(mac, []byte{0}) == 6 {
-			return errors.New("invalid diag traffic MAC")
-		}
-		duration, err := strconv.Atoi(args[6])
-		if err != nil || duration < 10 || duration > 300 {
-			return errors.New("diag traffic duration must be 10..300 seconds")
-		}
-		return nil
-	case "status", "report", "stop":
-		if len(args) != 6 ||
-			args[1] != "--run" ||
-			!validDiagTrafficRunID(args[2]) ||
-			args[3] != "--root" ||
-			filepath.Clean(args[4]) != diagTrafficRunsRoot ||
-			args[5] != "--json" {
-			return errors.New("unsupported diag traffic read form")
-		}
-		return nil
-	default:
-		return fmt.Errorf("unsupported diag traffic operation %q", args[0])
-	}
-}
-
-func validDiagTrafficRunID(v string) bool {
-	if len(v) != 25 || v[8] != 'T' || v[15] != 'Z' || v[16] != '-' {
-		return false
-	}
-	for i := 0; i < 16; i++ {
-		if i == 8 || i == 15 {
-			continue
-		}
-		if v[i] < '0' || v[i] > '9' {
-			return false
-		}
-	}
-	for i := 17; i < len(v); i++ {
-		if !((v[i] >= '0' && v[i] <= '9') || (v[i] >= 'a' && v[i] <= 'f')) {
-			return false
-		}
-	}
-	return true
-}
 
 func validateRootOwnedExecutable(path string) error {
 	info, err := os.Lstat(path)

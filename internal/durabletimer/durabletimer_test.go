@@ -26,8 +26,11 @@ func TestTimerCoalescesOutageAndDedupsConcurrentTicks(t *testing.T) {
 	if err := s.Add(Timer{ID: "control-check", Start: start, Period: 30 * time.Minute}); err != nil {
 		t.Fatal(err)
 	}
-	if f, _ := s.Tick(start.Add(time.Minute)); len(f) != 1 || f[0].Slot != 0 {
-		t.Fatalf("first: %+v", f)
+	if f, out, err := s.TickWithOutcome(start.Add(time.Minute)); err != nil || len(f) != 1 || f[0].Slot != 0 || out.State != "completed" || out.Processed != 1 {
+		t.Fatalf("first: %+v %+v %v", f, out, err)
+	}
+	if f, out, err := s.TickWithOutcome(start.Add(2 * time.Minute)); err != nil || len(f) != 0 || out.State != "idle" || out.Effect {
+		t.Fatalf("idle: %+v %+v %v", f, out, err)
 	}
 	if st, _ := s.Watchdog(start.Add(8*time.Hour), time.Hour); st != "STALE" {
 		t.Fatalf("watchdog: %s", st)

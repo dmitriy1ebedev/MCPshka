@@ -13,6 +13,11 @@ type Foreign interface {
 	Read(id, stream string, cursor int64, limit int) (Output, error)
 }
 
+// ForeignCanceller is a Foreign source whose jobs job_cancel can stop.
+type ForeignCanceller interface {
+	Cancel(id string) (Snapshot, error)
+}
+
 // ForeignPrefix marks ids a Foreign source owns.
 const ForeignPrefix = "rj-"
 

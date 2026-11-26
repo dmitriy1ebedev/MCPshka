@@ -21,10 +21,10 @@ func TestReasonClassAction(t *testing.T) {
 		{PolicyDenied, "tool_resolve", `{"goal":"allowed read-only alternative"}`},
 		{ApprovalRequired, "tool_resolve", `{"goal":"approval status"}`},
 		{FencedUnknown, "mutation_contracts", `{}`},
-		{Transient, "tool_resolve", `{"goal":"inspect interrupted operation before retry"}`},
-		{FailedVerified, "tool_resolve", `{"goal":"inspect verified failure"}`},
+		{Transient, "tool_resolve", `{"goal":"idempotency_status"}`},
+		{FailedVerified, "tool_resolve", `{"goal":"interaction_recovery_diagnose"}`},
 		{EvidenceMissing, "tool_resolve", `{"goal":"integration_test_prepare"}`},
-		{Deadline, "tool_resolve", `{"goal":"inspect deadline budget before retry"}`},
+		{Deadline, "tool_resolve", `{"goal":"idempotency_status"}`},
 	} {
 		t.Run(string(tc.class), func(t *testing.T) {
 			cause := errors.New("underlying cause")

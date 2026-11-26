@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"mcpshka/internal/gitprovider"
 	"os"
 	"os/exec"
 	"regexp"
@@ -65,7 +66,7 @@ func Argv(provider, mode, commit string) ([]string, error) {
 	case "sourcecraft/plan", "sourcecraft/publish", "sourcecraft/status", "sourcecraft/mirror",
 		"gitflic/plan", "gitflic/publish", "gitflic/status",
 		"github/plan", "github/publish", "github/status", "github/mirror", "github/pr":
-		return py("forges/extra_forge.py", provider, mode, "--commit", commit), nil
+		return []string{Command, Sub, provider, mode, commit}, nil
 	}
 	return nil, errors.New("provider must be gitverse, moshub, sourcecraft, gitflic or github and mode plan, publish or status (mirror: gitverse, sourcecraft, github; rerun: gitverse, moshub; pr: github)")
 }
@@ -102,6 +103,15 @@ func Run(ctx context.Context, provider, mode, commit string) ([]byte, int, error
 		ctx, cancel := context.WithTimeout(ctx, deadline)
 		defer cancel()
 		out, code, err = gvRun(ctx, mode, commit)
+	} else if provider == "github" || provider == "sourcecraft" || provider == "gitflic" {
+		child, cancel := context.WithTimeout(ctx, deadline)
+		defer cancel()
+		result, exit := gitprovider.ExtraForge(child, gitprovider.Site(provider), mode, Root, commit)
+		out, err = json.Marshal(result)
+		if len(out) > maxOut {
+			return nil, 2, errors.New("forge output exceeds budget")
+		}
+		code = exit
 	} else {
 		out, code, err = runScript(ctx, argv)
 	}

@@ -93,12 +93,12 @@ func TestMCP252SourceQuestionsBeatUnrelatedMatches(t *testing.T) {
 func TestImportRefusesUnreadableAndArchivesOldLog(t *testing.T) {
 	s := store(t)
 	ctx := context.Background()
-	if _, err := s.ImportMarkdown(ctx, filepath.Join(t.TempDir(), "missing"), "p"); err == nil {
-		t.Fatal("a missing directory must be an error")
+	if out, err := s.ImportMarkdown(ctx, filepath.Join(t.TempDir(), "missing"), "p"); err == nil || out.State != "no_effect" || out.Blocker != "memory_import_source_unavailable" {
+		t.Fatalf("missing source: %+v %v", out, err)
 	}
 	empty := t.TempDir()
-	if _, err := s.ImportMarkdown(ctx, empty, "p"); err == nil {
-		t.Fatal("a directory without memory files must be an error")
+	if out, err := s.ImportMarkdown(ctx, empty, "p"); err != nil || out.State != "idle" || out.Effect {
+		t.Fatalf("empty source: %+v %v", out, err)
 	}
 	dir := t.TempDir()
 	big := strings.Repeat("слово ", 700)

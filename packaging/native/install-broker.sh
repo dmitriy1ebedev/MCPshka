@@ -6,9 +6,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BROKER_SOURCE="$ROOT_DIR/bin/mcpshka-broker"
 TERMINAL_SOURCE="$ROOT_DIR/bin/mcpshka-container-terminal"
 BROKER_TARGET="/usr/local/libexec/mcpshka-broker"
-DIAG_TRAFFIC_SOURCE="$ROOT_DIR/packaging/native/diag-traffic-route-observe.py"
-DIAG_TRAFFIC_TARGET="/usr/local/libexec/diag-traffic-route-observe"
-DIAG_TRAFFIC_SHA256="6c60580612e0236e2b8f7afcfd6980771e62597606ed192fa57b54a450cde5e1"
 TRAFFIC_RUNS_ROOT="/var/lib/diag/traffic-runs"
 INSTALLER_TARGET="/usr/local/libexec/mcpshka-install-broker"
 SELF_DEPLOY_SOURCE="$ROOT_DIR/packaging/native/release-gate.py"
@@ -34,7 +31,7 @@ BROKER_SOCKET="/run/mcpshka-broker/broker.sock"
 
 if [[ $EUID -ne 0 ]]; then echo "install-broker.sh must run as root" >&2; exit 1; fi
 # Only an independently reviewed root-owned snapshot may feed this installer.
-python3 -I -S - "$BROKER_SOURCE" "$TERMINAL_SOURCE" "$UNIT_SOURCE" "$DIAG_TRAFFIC_SOURCE" \
+python3 -I -S - "$BROKER_SOURCE" "$TERMINAL_SOURCE" "$UNIT_SOURCE" \
   "$SELF_DEPLOY_SOURCE" "$GUARDED_DEPLOY_SOURCE" "$MIGRATION_SOURCE" "$AUTH_MIGRATOR_SOURCE" \
   "$USER_UNIT_SOURCE" "$ROOT_DIR/packaging/native/install-broker.sh" \
   "$ROOT_DIR/packaging/native/release-probe.py" \
@@ -65,9 +62,6 @@ _verify_inputs(sys.argv[1:], 0)
 RELEASE_INPUTS
 if [[ ! -x "$BROKER_SOURCE" ]]; then echo "missing broker binary: $BROKER_SOURCE" >&2; exit 1; fi
 if [[ ! -f "$UNIT_SOURCE" || -L "$UNIT_SOURCE" ]]; then echo "missing/unsafe broker unit: $UNIT_SOURCE" >&2; exit 1; fi
-if [[ ! -f "$DIAG_TRAFFIC_SOURCE" || -L "$DIAG_TRAFFIC_SOURCE" ]]; then echo "missing/unsafe DIAG traffic helper: $DIAG_TRAFFIC_SOURCE" >&2; exit 1; fi
-actual_diag_sha256="$(sha256sum "$DIAG_TRAFFIC_SOURCE" | awk '{print $1}')"
-[[ "$actual_diag_sha256" == "$DIAG_TRAFFIC_SHA256" ]] || { echo "DIAG traffic helper checksum mismatch: $actual_diag_sha256" >&2; exit 1; }
 for helper in "$GUARDED_DEPLOY_SOURCE" "$MIGRATION_SOURCE" "$ROOT_DIR/packaging/native/install-broker.sh"; do
   [[ -f "$helper" && ! -L "$helper" && -x "$helper" ]] || { echo "missing/unsafe root helper: $helper" >&2; exit 1; }
   bash -n "$helper"
@@ -87,7 +81,6 @@ install -d -o root -g root -m 0700 /var/lib/mcpshka-executor/candidates
 install -d -o root -g root -m 0755 /usr/local/libexec
 install -o root -g root -m 0755 "$BROKER_SOURCE" "$BROKER_TARGET"
 install -o root -g root -m 0755 "$TERMINAL_SOURCE" /usr/local/libexec/mcpshka-container-terminal
-install -o root -g root -m 0755 "$DIAG_TRAFFIC_SOURCE" "$DIAG_TRAFFIC_TARGET"
 install -d -o root -g mcpshka -m 2770 "$TRAFFIC_RUNS_ROOT"
 install -o root -g root -m 0755 "$ROOT_DIR/packaging/native/install-broker.sh" "$INSTALLER_TARGET"
 install -o root -g root -m 0755 "$SELF_DEPLOY_SOURCE" "$SELF_DEPLOY_TARGET"

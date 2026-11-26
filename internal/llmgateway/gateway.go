@@ -57,13 +57,19 @@ type Config struct {
 type Gateway struct {
 	ConfigPath  string
 	JournalPath string
-	HTTP        *http.Client
-	Secrets     func() []string
-	mu          sync.Mutex
-	health      map[string]Model
-	catalogs    map[string]catalog
-	tokens      map[string]token
-	slots       map[string]chan struct{}
+	// HealthPath keeps model probes across restarts. A dead mark lived only
+	// health_cache_minutes in memory, so nearly every llm.compare re-probed
+	// models the router had removed (26.11: 11 of 12 failed, the budget went
+	// on 404s); removed models now stay skipped for a day.
+	HealthPath string
+	healthRead bool
+	HTTP       *http.Client
+	Secrets    func() []string
+	mu         sync.Mutex
+	health     map[string]Model
+	catalogs   map[string]catalog
+	tokens     map[string]token
+	slots      map[string]chan struct{}
 }
 
 // slot waits for a free request slot of an endpoint with a concurrency cap.

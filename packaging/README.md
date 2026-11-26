@@ -6,6 +6,7 @@ The native service is intentionally local-only.
 
 Build first:
 
+    sh packaging/native/build-runner-assets.sh
     go build -trimpath -o bin/mcpshka ./cmd/mcpshka
 
 Then, as root:

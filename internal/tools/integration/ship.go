@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mcpshka/internal/distributedci"
+	"mcpshka/internal/integrationqueue"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,13 +55,14 @@ type IntegrationShipResult struct {
 
 var shipCommit = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
-// Env isolates the two host reads ship needs, for tests.
+// Env isolates ship's host observations for tests.
 type Env struct {
-	Head      func(ctx context.Context, repo, branch string) (string, error)
-	Roadmap   func(repo string) (string, error)
-	Active    func(ctx context.Context, unit string) bool
-	UnitState func(ctx context.Context, unit string) (string, error)
-	Now       func() time.Time
+	Architecture func(ctx context.Context, repo, branch, commit string) error
+	Head         func(ctx context.Context, repo, branch string) (string, error)
+	Roadmap      func(repo string) (string, error)
+	Active       func(ctx context.Context, unit string) bool
+	UnitState    func(ctx context.Context, unit string) (string, error)
+	Now          func() time.Time
 }
 
 func DefaultEnv() Env {
@@ -143,7 +146,7 @@ func Step(ctx context.Context, env Env, in IntegrationShipInput, call Call) (Int
 		in.Scope = "P7"
 	}
 	if in.ID == "" {
-		in.ID = "ship-" + in.Commit[:12]
+		in.ID = integrationqueue.DefaultShipID(in.Commit)
 	}
 	out := IntegrationShipResult{Commit: in.Commit, ItemID: in.ID}
 	// MCP-269: the provider CI and sealed root evidence are currently pinned
@@ -173,7 +176,8 @@ func Step(ctx context.Context, env Env, in IntegrationShipInput, call Call) (Int
 	if err != nil {
 		return out, err
 	}
-	switch item, _ := status["item"].(map[string]any); {
+	item, _ := status["item"].(map[string]any)
+	switch {
 	case status["found"] != true:
 		head, err := env.Head(ctx, in.Path, in.TargetBranch)
 		if err != nil || !shipCommit.MatchString(head) {
@@ -189,13 +193,22 @@ func Step(ctx context.Context, env Env, in IntegrationShipInput, call Call) (Int
 		if _, err := call(ctx, "integration_enqueue", map[string]any{"path": in.Path, "id": in.ID, "branch": in.Branch, "commit": in.Commit, "target_branch": in.TargetBranch, "target_head": head, "roadmap_sha256": sum, "scope": in.Scope, "idempotency_key": key("enqueue:" + sum[:min(len(sum), 16)])}); err != nil {
 			return out, err
 		}
+	case Str(item, "request", "commit") != in.Commit:
+		return out, errors.New("integration item belongs to another commit: use a new id")
 	case Str(item, "state") == "published":
 		out.Stage, out.Done, out.NextAction = "PUBLISHED", true, "integration complete; deploy separately"
 		return out, nil
 	case Str(item, "state") == "cancelled":
 		return out, errors.New("integration item is cancelled: use a new id")
-	case Str(item, "request", "commit") != in.Commit:
-		return out, errors.New("integration item belongs to another commit: use a new id")
+	}
+	// An already claimed item must be allowed to reconcile its Git effect.
+	state := integrationqueue.State(Str(item, "state"))
+	if in.Path == "/root/repos/mcpshka" && env.Architecture != nil && state != integrationqueue.Integrating && state != integrationqueue.Integrated {
+		if err := env.Architecture(ctx, in.Path, in.TargetBranch, in.Commit); err != nil {
+			out.Stage, out.Detail = "ARCHLINT_FAILED", err.Error()
+			out.NextAction = "fix or cancel the affected integration intents, then submit the verified tree"
+			return out, nil
+		}
 	}
 
 	// 2. Sealed test evidence for the exact commit. Polling needs a fresh key.
@@ -231,6 +244,11 @@ func Step(ctx context.Context, env Env, in IntegrationShipInput, call Call) (Int
 		return out, err
 	}
 	out.PermitID, out.LaunchID = Str(prep, "permit_id"), Str(prep, "launch_id")
+	if Str(prep, "state") == "FAILED" {
+		out.Stage, out.Detail = "TEST_FAILED", "sealed test preparation failed: "+Str(prep, "reason")
+		out.NextAction = Str(prep, "next_action")
+		return out, nil
+	}
 	if Str(prep, "state") != "SEALED" {
 		return again("TEST_PREPARING", "sealed test is being prepared ("+Str(prep, "state")+")")
 	}
@@ -286,6 +304,18 @@ func Step(ctx context.Context, env Env, in IntegrationShipInput, call Call) (Int
 	case Str(st, "result", "state") != "SUCCEEDED":
 		out.Stage, out.NextAction = "TEST_FAILED", "fix the commit, or repeat with attempt "+strconv.Itoa(in.Attempt+1)+" for a flaky run"
 		out.Detail = "sealed test " + Str(st, "result", "state")
+		if in.Evidence == "module" && strings.Contains("\n"+Str(st, "result", "output")+"\n", "\n"+distributedci.ArchlintFailed+"\n") {
+			out.Detail = "archlint failed on the sealed candidate; the remaining tests were skipped"
+			out.NextAction = "inspect the sealed test output and fix the architecture violations before resubmitting"
+		}
+		return out, nil
+	}
+
+	if Str(item, "state") == string(integrationqueue.Integrated) {
+		if head, err := env.Head(ctx, in.Path, in.TargetBranch); err != nil || head != in.Commit {
+			return out, errors.New("published integration no longer matches target HEAD: HOLD")
+		}
+		out.Stage, out.Done, out.NextAction = "PUBLISHED", true, "integration complete; prepare the release separately"
 		return out, nil
 	}
 

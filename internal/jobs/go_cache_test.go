@@ -3,7 +3,9 @@ package jobs
 import (
 	"context"
 	"mcpshka/internal/audit"
+	"mcpshka/internal/failure"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -85,8 +87,23 @@ func TestGoCacheMaintenanceAdmission(t *testing.T) {
 	m.mu.Lock()
 	m.cacheMaintenance = true
 	m.mu.Unlock()
-	if _, err := m.Start("sleep", []string{"1"}, work); err == nil || !strings.Contains(err.Error(), "cache maintenance") {
-		t.Fatalf("admitted during cache cleanup: %v", err)
+	if _, err := m.Start("sleep", []string{"1"}, work); !failure.IsNoEffect(err) || failure.Details(err).Code != failure.GoCacheMaintenance || failure.Details(err).RetryAfterSeconds <= 0 {
+		t.Fatalf("expected retryable no-effect cache refusal: %v", err)
+	}
+	source := filepath.Join(work, "source")
+	if out, err := exec.Command("git", "init", "-q", source).CombinedOutput(); err != nil {
+		t.Fatalf("init fixture: %s: %v", out, err)
+	}
+	dest := filepath.Join(work, "clone")
+	job, err := m.Start("git", []string{"clone", "--no-local", source, dest}, work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := waitForTerminal(t, m, job.ID); got.State != Done {
+		t.Fatalf("clone: %+v", got)
+	}
+	if _, err := os.Stat(filepath.Join(dest, ".git", "HEAD")); err != nil {
+		t.Fatal(err)
 	}
 }
 

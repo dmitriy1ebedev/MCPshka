@@ -15,10 +15,9 @@ import (
 	"mcpshka/internal/idempotency"
 	"mcpshka/internal/toolcontract"
 	"mcpshka/internal/tooldef"
-	"mcpshka/internal/toolstats"
+	"mcpshka/internal/tools/autonomy"
 	"os"
 	"strings"
-	"time"
 )
 
 // ownFaceIDGrant lists irreversible tools authorized by their own per-task
@@ -96,7 +95,7 @@ func (r *toolRegistry) install(d tooldef.Def) {
 		zero := d.Zero
 		ctx = invocationContext(ctx, req)
 		if err := authorizeTool(ctx, tool); err != nil {
-			return nil, zero, err
+			return nil, zero, failure.BeforeDispatch(err)
 		}
 		if readOnly {
 			return d.Handler(ctx, req, in)
@@ -117,15 +116,7 @@ func (r *toolRegistry) install(d tooldef.Def) {
 		return result, value, err
 	}
 	wrapped = classifyHandler(wrapped)
-	timed := wrapped
-	wrapped = func(ctx context.Context, req *mcp.CallToolRequest, in any) (*mcp.CallToolResult, any, error) {
-		finishHTTPTool := toolstats.BeginHTTPTool(ctx)
-		defer finishHTTPTool()
-		start := time.Now()
-		res, out, err := timed(ctx, req, in)
-		toolstats.Default.Record(tool.Name, routeOf(ctx), start, time.Since(start), err != nil || res != nil && res.IsError)
-		return res, out, err
-	}
+	wrapped = autonomy.Track(r.audit, tool.Name, routeOf, wrapped)
 	if r.invokers == nil {
 		r.invokers = map[string]toolInvoker{}
 	}
@@ -298,6 +289,9 @@ func (r *toolRegistry) mutate(ctx context.Context, tool *mcp.Tool, input map[str
 	}
 	replayPending := false
 	if !begin.Fresh {
+		if refused := toolcontract.ReplayCacheRefusal(begin.Entry); refused != nil {
+			return nil, nil, refused
+		}
 		_, _, state, err := readReceipt(ledgerKey, operation, fingerprint)
 		if err != nil {
 			return nil, nil, err
@@ -362,11 +356,12 @@ func (r *toolRegistry) mutate(ctx context.Context, tool *mcp.Tool, input map[str
 	phase := "UNKNOWN"
 	var auditBefore, auditAfter contractEvidence
 	if r.audit != nil {
-		if err = r.audit.Log(audit.Event{Type: "mutation_contract", Result: "started", Details: map[string]any{"tool": tool.Name, "key_sha256": hex.EncodeToString(sum[:]), "fingerprint": fingerprint}}); err != nil {
+		project := autonomy.MutationProject(input)
+		if err = r.audit.Log(audit.Event{Type: "mutation_contract", Workdir: project, Result: "started", Details: map[string]any{"tool": tool.Name, "key_sha256": hex.EncodeToString(sum[:]), "receipt_key_sha256": begin.Entry.KeyHash, "fingerprint": fingerprint}}); err != nil {
 			return nil, nil, r.store.RejectBeforeAudit(ledgerKey, begin, err)
 		}
 		defer func() {
-			_ = r.audit.Log(audit.Event{Type: "mutation_contract", Result: phase, Details: map[string]any{"tool": tool.Name, "key_sha256": hex.EncodeToString(sum[:]), "before": auditBefore, "after": auditAfter}})
+			_ = r.audit.Log(audit.Event{Type: "mutation_contract", Workdir: project, Result: phase, Details: map[string]any{"tool": tool.Name, "key_sha256": hex.EncodeToString(sum[:]), "receipt_key_sha256": begin.Entry.KeyHash, "before": auditBefore, "after": auditAfter}})
 		}()
 	}
 	before, err := r.evidence(ctx, tool.Name, input, nil, true)
@@ -379,10 +374,10 @@ func (r *toolRegistry) mutate(ctx context.Context, tool *mcp.Tool, input map[str
 		if begin.Fresh {
 			if discardErr := r.store.Discard(ledgerKey, operation, fingerprint); discardErr == nil {
 				phase = "rejected_no_effect"
-				return nil, nil, fmt.Errorf("before probe failed; nothing was done, the same call may be repeated: %w", err)
+				return nil, nil, failure.BeforeDispatch(fmt.Errorf("before probe failed; nothing was done, the same call may be repeated: %w", err))
 			}
 		}
-		return nil, nil, fmt.Errorf("before probe failed; request held: %w", err)
+		return nil, nil, failure.NewHold(failure.FencedUnknown, "BEFORE_PROBE_FAILED", "mcpserver.mutate", "before probe failed; request held", err)
 	}
 	// A request whose budget is already spent must not start the handler: it
 	// would fail mid-way and leave an UNKNOWN receipt (MCP-135).
@@ -410,6 +405,13 @@ func (r *toolRegistry) mutate(ctx context.Context, tool *mcp.Tool, input map[str
 				held.NextSafeAction = failure.Action{Tool: "gateway_reconcile", Arguments: map[string]any{"tool": tool.Name, "key": recoveryKey}}
 				return result, out, held
 			}
+			if failure.Details(err).Code == failure.GoCacheMaintenance {
+				recorded := toolcontract.RecordCacheRefusal(r.store, ledgerKey, operation, fingerprint, err)
+				if failure.IsNoEffect(recorded) {
+					phase = "rejected_no_effect"
+				}
+				return result, out, recorded
+			}
 			if discardErr := r.store.Discard(ledgerKey, operation, fingerprint); discardErr == nil {
 				phase = "rejected_no_effect"
 			}
@@ -427,7 +429,7 @@ func (r *toolRegistry) mutate(ctx context.Context, tool *mcp.Tool, input map[str
 	after, err := r.evidence(ctx, tool.Name, input, output, false)
 	auditAfter = after
 	if err != nil {
-		return result, out, fmt.Errorf("after probe failed; effect UNKNOWN: %w", err)
+		return result, out, failure.NewHold(failure.FencedUnknown, "AFTER_PROBE_FAILED", "mcpserver.mutate", "after probe failed; effect UNKNOWN", err)
 	}
 	receipt := contractReceipt[any]{Output: out, Before: before, After: after}
 	if result != nil && result.IsError {
@@ -435,7 +437,7 @@ func (r *toolRegistry) mutate(ctx context.Context, tool *mcp.Tool, input map[str
 		receipt.ErrorText = mcpErrorText(result)
 	}
 	if err = r.store.Complete(ledgerKey, operation, fingerprint, receipt); err != nil {
-		return result, out, fmt.Errorf("effect UNKNOWN: cannot persist receipt: %w", err)
+		return result, out, failure.NewHold(failure.FencedUnknown, "RECEIPT_WRITE_FAILED", "mcpserver.mutate", "effect UNKNOWN: cannot persist receipt", err)
 	}
 	phase = "completed"
 	if result == nil {

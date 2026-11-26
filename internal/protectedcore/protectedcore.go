@@ -115,7 +115,6 @@ var components = []Component{
 			"internal/brokerwire/",
 			"packaging/native/install-broker.sh",
 			"packaging/native/codex-bridge.py",
-			"packaging/native/diag-traffic-route-observe.py",
 			"packaging/systemd/mcpshka-broker.service",
 		},
 	},

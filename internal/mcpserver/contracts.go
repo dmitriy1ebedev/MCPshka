@@ -210,7 +210,7 @@ func mutationReceiptKey(ctx context.Context, name, key string, input map[string]
 	if isInteractiveLeaseMutation(name) {
 		return yieldHash(uploadOwner(ctx) + "\x00" + name + "\x00" + key)
 	}
-	if strings.HasPrefix(name, "storage_") || strings.HasPrefix(name, "backup_") || name == "knowledge_import_chat" {
+	if strings.HasPrefix(name, "storage_") || strings.HasPrefix(name, "backup_") || name == "knowledge_import_chat" || name == "memory_archive" {
 		return yieldHash(uploadOwner(ctx) + "\x00" + name + "\x00" + key)
 	}
 	if toolcontract.SessionTool(name) || isDockerTerminal(name) {
@@ -225,7 +225,7 @@ func mutationReceiptKey(ctx context.Context, name, key string, input map[string]
 func (r *toolRegistry) probeMutation(ctx context.Context, in MutationProbeInput) (map[string]any, error) {
 	opts := toolcontract.ProbeOptions{
 		ReceiptKey:               mutationReceiptKey(ctx, in.Tool, in.Key, in.Input),
-		PrincipalScoped:          toolcontract.SessionTool(in.Tool) || isInteractiveLeaseMutation(in.Tool) || exclusiveYield(in.Tool, in.Input) || isRecoveryCompat(in.Tool, in.Input) || isIntegrationMutation(in.Tool, in.Input),
+		PrincipalScoped:          in.Tool == "memory_archive" || toolcontract.SessionTool(in.Tool) || isInteractiveLeaseMutation(in.Tool) || exclusiveYield(in.Tool, in.Input) || isRecoveryCompat(in.Tool, in.Input) || isIntegrationMutation(in.Tool, in.Input),
 		RetirementRejectedPrefix: retirementRejectedBeforeWorker,
 		HandlerUnknown: func(err error) bool {
 			var class *classifiedError

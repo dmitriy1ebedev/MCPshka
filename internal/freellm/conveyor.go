@@ -117,6 +117,10 @@ func (c *Conveyor) List() ([]Fix, error) {
 // cards, when given, limits the run to those card ids. Merging always waits for
 // fixes_review.
 func (c *Conveyor) Run(ctx context.Context, mode string, cards ...string) ([]Fix, error) {
+	return c.run(ctx, mode, nil, cards...)
+}
+
+func (c *Conveyor) run(ctx context.Context, mode string, observe func(Fix, Fix), cards ...string) ([]Fix, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if mode == "" {
@@ -165,6 +169,7 @@ func (c *Conveyor) Run(ctx context.Context, mode string, cards ...string) ([]Fix
 			continue
 		}
 		if prev, ok := known[summary.ID]; ok {
+			before := prev
 			if prev.State == "testing" {
 				token, e := os.ReadFile(filepath.Join(c.Dir, prev.Card+".lease-token"))
 				if e != nil {
@@ -174,6 +179,9 @@ func (c *Conveyor) Run(ctx context.Context, mode string, cards ...string) ([]Fix
 				if err != nil {
 					return out, err
 				}
+			}
+			if observe != nil {
+				observe(before, prev)
 			}
 			out = append(out, prev)
 			continue
@@ -200,6 +208,9 @@ func (c *Conveyor) Run(ctx context.Context, mode string, cards ...string) ([]Fix
 			if e := c.save(f); e != nil {
 				return out, e
 			}
+		}
+		if observe != nil {
+			observe(Fix{}, f)
 		}
 		out = append(out, f)
 		if ctx.Err() != nil {

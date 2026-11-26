@@ -315,6 +315,10 @@ func normalize(r Record, now time.Time) (Record, error) {
 // no-op; with a new body the current record is closed and superseded (the
 // bi-temporal history is kept). It returns the stored record.
 func (s *Store) Write(ctx context.Context, r Record) (Record, bool, error) {
+	return s.write(ctx, r, "", nil)
+}
+
+func (s *Store) write(ctx context.Context, r Record, guard string, checkpoint func(string) string) (Record, bool, error) {
 	r, err := normalize(r, s.now())
 	if err != nil {
 		return r, false, err
@@ -327,15 +331,34 @@ func (s *Store) Write(ctx context.Context, r Record) (Record, bool, error) {
 		// Questions are kept by source: a stable one survives supersedes.
 		ks := sha256.Sum256([]byte(key))
 		r.Source = "memory:" + hex.EncodeToString(ks[:6])
+	} else if questions != "" {
+		// 26.11 audit: five records of one chat shared a source, and each
+		// read back the questions of the last one. A source already used by
+		// another topic gets this topic's mark, so its questions stay its own.
+		if shared, _ := s.read(ctx, "SELECT 1 FROM mem WHERE source="+lit(r.Source)+" AND tkey<>"+lit(key)+" AND origin='own' LIMIT 1;"); len(shared) == 1 {
+			ks := sha256.Sum256([]byte(key))
+			r.Source += " #" + hex.EncodeToString(ks[:3])
+		}
 	}
 	rows, err := s.read(ctx, "SELECT id, body, remind_at, reminded FROM mem WHERE tkey="+lit(key)+" AND valid_to IS NULL AND origin='own' LIMIT 1;")
 	if err != nil {
 		return r, false, err
 	}
-	sql := "BEGIN IMMEDIATE;\n"
+	sql := "BEGIN IMMEDIATE;\n" + guard
+	if guard != "" {
+		oldID := ""
+		if len(rows) != 0 {
+			oldID = str(rows[0], "id")
+		}
+		sql += "INSERT INTO archive_fence SELECT coalesce((SELECT id FROM mem WHERE tkey=" + lit(key) + " AND valid_to IS NULL AND origin='own' LIMIT 1),'')=" + lit(oldID) + ";\n"
+	}
 	if len(rows) == 1 {
 		old := fromRow(rows[0])
 		if old.Body == r.Body && old.Reminded == r.Reminded && sameTime(old.RemindAt, r.RemindAt) {
+			if checkpoint != nil {
+				_, err := s.exec(ctx, sql+checkpoint(old.ID)+"COMMIT;")
+				return old, false, err
+			}
 			if questions != "" {
 				err := s.SetQuestions(ctx, map[string][]string{r.Source: r.Questions})
 				old, gerr := s.Get(ctx, str(rows[0], "id"))
@@ -356,8 +379,11 @@ func (s *Store) Write(ctx context.Context, r Record) (Record, bool, error) {
 			questions = str(rows[0], "questions")
 		}
 	}
-	sql += insertSQL(r, key, packVec(vectorsAt(filepath.Dir(s.file)).Embed(vecText(r, questions)))) + "COMMIT;"
-	if _, err = s.exec(ctx, sql); err != nil {
+	sql += insertSQL(r, key, packVec(vectorsAt(filepath.Dir(s.file)).Embed(vecText(r, questions))))
+	if checkpoint != nil {
+		sql += checkpoint(r.ID)
+	}
+	if _, err = s.exec(ctx, sql+"COMMIT;"); err != nil {
 		return r, false, err
 	}
 	return r, true, nil
@@ -474,7 +500,10 @@ func (s *Store) Recall(ctx context.Context, q Query) ([]Hit, error) {
 	q.Text = expand(q.Text)
 	word, tri := matchQueries(q.Text)
 	if word == "" {
-		return nil, fmt.Errorf("%w: query needs words", ErrInvalid)
+		if q.Tag != "" {
+			return s.recallTagged(ctx, q)
+		}
+		return nil, fmt.Errorf("%w: query needs words (or give tag to list its records)", ErrInvalid)
 	}
 	ranked := func(table, expr string) string {
 		if expr == "" {
@@ -537,6 +566,27 @@ SELECT m.*, w.r AS wr, t.r AS tr, s.r AS sr FROM mem m LEFT JOIN w ON w.rid=m.ri
 	sort.SliceStable(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
 	if len(hits) > q.Limit {
 		hits = hits[:q.Limit]
+	}
+	return hits, nil
+}
+
+// recallTagged lists the newest current records of a tag when no words are
+// given (26.11 audit: memory_recall tag=аудит-0193 text="" was refused).
+func (s *Store) recallTagged(ctx context.Context, q Query) ([]Hit, error) {
+	rows, err := s.read(ctx, "SELECT * FROM mem WHERE valid_to IS NULL AND (' '||tags||' ') LIKE "+lit("% "+strings.ReplaceAll(strings.ReplaceAll(q.Tag, "%", ""), "_", "")+" %")+" ORDER BY recorded_at DESC LIMIT 200;")
+	if err != nil {
+		return nil, err
+	}
+	hits := []Hit{}
+	for _, row := range rows {
+		r := fromRow(row)
+		if !q.wants(r) || q.Project != "" && !strings.EqualFold(q.Project, r.Project) {
+			continue
+		}
+		hits = append(hits, Hit{Record: r, Score: 1, Why: "тег"})
+		if len(hits) == q.Limit {
+			break
+		}
 	}
 	return hits, nil
 }

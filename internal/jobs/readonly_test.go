@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"mcpshka/internal/runoutcome"
 )
 
 func TestLLMJobSurvivesClientAndCancels(t *testing.T) {
@@ -81,5 +83,27 @@ func TestLLMJobOutputIsBounded(t *testing.T) {
 	out, e := m.Read(j.ID, "stdout", 0, 1024)
 	if e != nil || len(out.Text) > 1024 || !strings.Contains(out.Text, "error") {
 		t.Fatal(out, e)
+	}
+}
+
+type testScheduledOutcome struct{ runoutcome.Result }
+
+func (r testScheduledOutcome) Outcome() runoutcome.Result { return r.Result }
+
+func TestNativeScheduledJobKeepsNoEffectReceipt(t *testing.T) {
+	m, _ := testManager(t)
+	j, err := m.StartFixes(context.Background(), func(context.Context) (any, error) {
+		return testScheduledOutcome{runoutcome.Resolve(0, true, "cursor_blocked", "inspect saved offset")}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j = waitForTerminal(t, m, j.ID)
+	if j.State != NoEffect || j.Error != "cursor_blocked" || j.ExitCode == nil || *j.ExitCode == 0 {
+		t.Fatal(j)
+	}
+	out, err := m.Read(j.ID, "stdout", 0, 1024)
+	if err != nil || !strings.Contains(out.Text, "inspect saved offset") {
+		t.Fatal(out, err)
 	}
 }

@@ -47,6 +47,9 @@ const (
 	Queued     State = "QUEUED"
 	Running    State = "running"
 	Done       State = "done"
+	Idle       State = "idle"
+	NoEffect   State = "no_effect"
+	Partial    State = "partial"
 	Failed     State = "failed"
 	Cancelling State = "cancelling"
 	Cancelled  State = "cancelled"
@@ -381,6 +384,12 @@ func (m *Manager) Read(id, stream string, cursor int64, limit int) (Output, erro
 }
 
 func (m *Manager) Cancel(id string) (Snapshot, error) {
+	if f := foreignFor(id); f != nil {
+		if c, ok := f.(ForeignCanceller); ok {
+			return c.Cancel(id)
+		}
+		return Snapshot{}, errors.New("this off-box job source cannot cancel; the job ends by its own timeout")
+	}
 	m.mu.Lock()
 	j, ok := m.jobs[id]
 	if !ok {
@@ -490,7 +499,7 @@ func streamOrDefault(s string) string {
 }
 
 func isTerminal(s State) bool {
-	return s == Done || s == Failed || s == Cancelled || s == TimedOut
+	return s == Done || s == Idle || s == NoEffect || s == Partial || s == Failed || s == Cancelled || s == TimedOut
 }
 
 func (m *Manager) Policy() *policy.Policy {

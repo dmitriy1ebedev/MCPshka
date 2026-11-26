@@ -33,7 +33,7 @@ func TestSyncSessionsIncremental(t *testing.T) {
 {"timestamp":"2026-11-23T11:00:02Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"lane починен"}]}}
 `), 0o600)
 	rep, err := s.SyncSessions(ctx, []string{dir})
-	if err != nil || rep.Files != 2 || rep.Chunks != 2 {
+	if err != nil || rep.Files != 2 || rep.Chunks != 2 || rep.State != "completed" || rep.Processed != 2 {
 		t.Fatalf("first sync %+v %v", rep, err)
 	}
 	hits, _ := s.InboxNext(ctx, 5)
@@ -51,7 +51,7 @@ func TestSyncSessionsIncremental(t *testing.T) {
 			t.Fatalf("leaked %q", bad)
 		}
 	}
-	if again, _ := s.SyncSessions(ctx, []string{dir}); again.Files != 0 || again.Chunks != 0 {
+	if again, _ := s.SyncSessions(ctx, []string{dir}); again.Files != 0 || again.Chunks != 0 || again.State != "idle" {
 		t.Fatalf("rerun not idempotent: %+v", again)
 	}
 	f, _ := os.OpenFile(cc, os.O_APPEND|os.O_WRONLY, 0o600)
@@ -60,5 +60,17 @@ func TestSyncSessionsIncremental(t *testing.T) {
 	next, err := s.SyncSessions(ctx, []string{dir})
 	if err != nil || next.Files != 1 || next.Chunks != 1 || next.Inbox.Pending != 3 {
 		t.Fatalf("append sync %+v %v", next, err)
+	}
+}
+
+func TestSyncSessionsPartialLineHasNoEffect(t *testing.T) {
+	s := store(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pending.jsonl"), []byte("{\"type\":\"user\""), 0600); err != nil {
+		t.Fatal(err)
+	}
+	report, err := s.SyncSessions(context.Background(), []string{dir})
+	if err != nil || report.State != "no_effect" || report.Effect || report.NextSafeAction == "" {
+		t.Fatal(report, err)
 	}
 }

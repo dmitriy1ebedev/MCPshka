@@ -100,13 +100,10 @@ func (h *Hub) Archive(ctx context.Context, j Job) error {
 	return nil
 }
 
-// Agent is the pull-runner script served at /runner/agent.py.
-//
-//go:embed agent.py
-var Agent []byte
-
 //go:embed setup.sh
 var setupScript string
 
 // Setup is the one-line installer served at /runner/setup for origin.
-func Setup(origin string) []byte { return []byte(strings.ReplaceAll(setupScript, "@ORIGIN@", origin)) }
+func Setup(origin string) []byte {
+	return []byte(strings.ReplaceAll(setupScript, "@ORIGIN@", strings.ReplaceAll(origin, "'", "'\"'\"'")))
+}

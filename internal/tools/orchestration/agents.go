@@ -100,8 +100,13 @@ func RegisterAgents(add func(tooldef.Def), d AgentDeps, managers ...*jobs.Manage
 			}
 			path := in.Path
 			if in.Worktree {
-				wt, err := agents.OwnWorktree(ctx, path, id)
+				// git worktree add takes 20–40 s on a loaded H96 (26.11); the
+				// chat's deadline must not kill it halfway and leave an orphan.
+				wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
+				wt, err := agents.OwnWorktree(wctx, path, id)
+				cancel()
 				if err != nil {
+					_ = os.Remove(filepath.Join(agents.TaskDir, id+".prompt"))
 					return nil, err
 				}
 				path = wt

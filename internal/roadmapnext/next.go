@@ -4,10 +4,11 @@
 package roadmapnext
 
 import (
-	"bufio"
 	"errors"
 	"regexp"
 	"strings"
+
+	"mcpshka/internal/roadmapscan"
 )
 
 // Item is the next phase or item a run should take.
@@ -21,10 +22,10 @@ type Item struct {
 }
 
 var (
-	heading  = regexp.MustCompile(`^(#{2,4})\s+(.+?)\s*$`)
-	checkbox = regexp.MustCompile(`^\s*(?:[-*+]|\d+\.)\s*\**\s*\[( |-|x|X)\]\s*\**\s*(.*)$`)
-	phaseID  = regexp.MustCompile(`\b(P\d{1,3}[a-z]?)\b`)
-	accept   = regexp.MustCompile(`^\s*\*\*(?:DONE|Done|Acceptance|Приёмка|Готово)[^*]*\*\*\s*(.*)$`)
+	heading = regexp.MustCompile(`^(#{2,4})\s+(.+?)\s*$`)
+
+	phaseID = regexp.MustCompile(`\b(P\d{1,3}[a-z]?)\b`)
+	accept  = regexp.MustCompile(`^\s*\*\*(?:DONE|Done|Acceptance|Приёмка|Готово)[^*]*\*\*\s*(.*)$`)
 )
 
 // Next returns the first section that still has an open ("[ ]" or "[-]")
@@ -32,7 +33,8 @@ var (
 // is checked is done.
 func Next(roadmap string) (Item, error) {
 	type section struct {
-		item Item
+		item  Item
+		level int
 	}
 	var cur *section
 	var found *Item
@@ -42,36 +44,42 @@ func Next(roadmap string) (Item, error) {
 			found = &it
 		}
 	}
-	scan := bufio.NewScanner(strings.NewReader(roadmap))
-	scan.Buffer(make([]byte, 64*1024), 1<<20)
-	n := 0
-	for scan.Scan() {
-		n++
-		line := scan.Text()
+	lines, _ := roadmapscan.ContentLines(roadmap)
+	for i, line := range lines {
 		if m := heading.FindStringSubmatch(line); m != nil {
+			if cur != nil && cur.level > 0 && len(m[1]) > cur.level {
+				continue
+			}
 			finish()
 			if found != nil {
 				break
 			}
 			title := strings.Trim(m[2], "*` ")
-			id := title
-			if p := phaseID.FindString(title); p != "" {
+			id := roadmapscan.SectionID(line)
+			level := 0
+			if id != "" {
+				level = len(m[1])
+			}
+			if id == "" {
+				id = title
+			}
+			if p := phaseID.FindString(title); id == title && p != "" {
 				id = p
 			}
-			cur = &section{item: Item{ID: id, Title: title, Line: n}}
+			cur = &section{item: Item{ID: id, Title: title, Line: i + 1}, level: level}
 			continue
 		}
 		if cur == nil {
 			continue
 		}
-		if m := checkbox.FindStringSubmatch(line); m != nil {
-			text := strings.TrimSpace(strings.Trim(m[2], "* "))
+		if m := roadmapscan.Checkbox.FindStringSubmatch(line); m != nil {
+			text := strings.TrimSpace(strings.Trim(m[4], "* "))
 			if len(text) > 300 {
 				text = text[:300] + "…"
 			}
-			if m[1] == "x" || m[1] == "X" {
+			if m[2] == "x" || m[2] == "X" {
 				cur.item.Done++
-			} else {
+			} else if roadmapscan.Superseded(m[2], m[4]) == "" {
 				cur.item.Open = append(cur.item.Open, text)
 			}
 			continue
@@ -84,10 +92,12 @@ func Next(roadmap string) (Item, error) {
 	if found == nil {
 		return Item{}, errors.New("roadmap has no open items")
 	}
-	if !phaseID.MatchString(found.ID) && len(found.Open) > 0 {
+	if found.ID == found.Title && !phaseID.MatchString(found.ID) && len(found.Open) > 0 {
 		// Numbered queues name the item by its first open entry.
 		found.ID = strings.Fields(found.Open[0] + " item")[0]
-		if p := phaseID.FindString(found.Open[0]); p != "" {
+		if id := roadmapscan.EntryID(found.Open[0]); id != "" {
+			found.ID = id
+		} else if p := phaseID.FindString(found.Open[0]); p != "" {
 			found.ID = p
 		}
 	}

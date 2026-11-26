@@ -52,9 +52,6 @@ func TestBrokerPackagingAllowsOnlyBoundedTrafficCapture(t *testing.T) {
 	}
 	installText := string(installer)
 	for _, want := range []string{
-		"DIAG_TRAFFIC_SOURCE=\"$ROOT_DIR/packaging/native/diag-traffic-route-observe.py\"",
-		"DIAG_TRAFFIC_TARGET=\"/usr/local/libexec/diag-traffic-route-observe\"",
-		"DIAG_TRAFFIC_SHA256=\"6c60580612e0236e2b8f7afcfd6980771e62597606ed192fa57b54a450cde5e1\"",
 		"TRAFFIC_RUNS_ROOT=\"/var/lib/diag/traffic-runs\"",
 		"install -d -o root -g mcpshka -m 2770 \"$TRAFFIC_RUNS_ROOT\"",
 	} {
@@ -63,14 +60,6 @@ func TestBrokerPackagingAllowsOnlyBoundedTrafficCapture(t *testing.T) {
 		}
 	}
 
-	helper := filepath.Join(root, "packaging", "native", "diag-traffic-route-observe.py")
-	info, err := os.Stat(helper)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !info.Mode().IsRegular() || info.Size() == 0 {
-		t.Fatalf("invalid bundled DIAG helper: mode=%v size=%d", info.Mode(), info.Size())
-	}
 }
 
 func TestBrokerResourceUpgradeAndRollbackRegression(t *testing.T) {

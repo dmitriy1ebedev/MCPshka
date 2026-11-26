@@ -45,6 +45,7 @@ var Aliases = map[string]string{
 	"self_heal_status":       "self healing repair status самолечение самовосстановление контейнеров история ремонтов лимиты",
 	"fs_find":                "find files search files найти файл поиск файлов",
 	"git_status":             "git status состояние гит",
+	"git_provider_push":      "git_push git push public mirror push mirror to GitVerse GitHub HTTPS опубликовать зеркало пуш гит",
 	"project_context":        "project context контекст проекта",
 	"phase_gate":             "phase gate verdict гейт фазы готовность закрыть этап roadmap",
 	"mcpshka_guide":          "guide help справка правила инструкция как работать индекс инструментов",
@@ -151,6 +152,10 @@ func Resolve(ctx context.Context, d Deps, in ToolResolveInput) (ToolResolveResul
 		out.Instructions = "The reviewed workflow exists, but its tools are not available to this caller. Inspect capability permissions and prerequisites; do not replace this operation with an unrelated tool. " + routeInstructions
 		return out, nil
 	}
+	// 26.11 audit: guessed names (git_push, issue_search, project_issue_create)
+	// were one token and matched nothing; their parts find the real tool.
+	goalWords := splitGuessedNames(Words(goal))
+	guessed := len(goalWords) > len(Words(goal))
 	if len(matches) == 0 {
 		for _, name := range view.Names {
 			t := view.Catalog[name]
@@ -166,7 +171,13 @@ func Resolve(ctx context.Context, d Deps, in ToolResolveInput) (ToolResolveResul
 				matches = []match{{name, 10000}}
 				break
 			}
-			score = Score(Words(goal), Words(name+" "+strings.ReplaceAll(name, "_", " ")+" "+t.Description+" "+Aliases[name]+" "+AliasesRU[name]), Words(d.CategoryAliases(name)))
+			own := Words(name + " " + strings.ReplaceAll(name, "_", " ") + " " + t.Description + " " + Aliases[name] + " " + AliasesRU[name])
+			score = Score(goalWords, own, Words(d.CategoryAliases(name)))
+			// The parts must be in the tool's name or aliases: a description
+			// mentioning "dispatch" does not make cloud_agent_observe cloud_dispatch.
+			if guessed && !coversParts(goalWords, Words(strings.ReplaceAll(name, "_", " ")+" "+Aliases[name]+" "+AliasesRU[name])) {
+				score = 0
+			}
 			if score > 0 {
 				matches = append(matches, match{name, score})
 			}
@@ -294,6 +305,27 @@ func FirstSentence(s string) string {
 
 // capabilityWords lowercases s and splits it on everything but letters,
 // digits and underscores, so "tool," and "(Face" still match.
+// coversParts: a guessed name resolves only to a tool whose own words carry
+// every part of it, so cloud_dispatch does not become issue_dispatch.
+func coversParts(goal, own []string) bool {
+	for _, w := range goal {
+		if !strings.Contains(w, "_") && Score([]string{w}, own, nil) == 0 && len([]rune(w)) >= 3 && !capabilityStopWords[w] {
+			return false
+		}
+	}
+	return true
+}
+
+func splitGuessedNames(words []string) []string {
+	out := words
+	for _, w := range words {
+		if strings.Contains(w, "_") {
+			out = append(out, strings.FieldsFunc(w, func(r rune) bool { return r == '_' })...)
+		}
+	}
+	return out
+}
+
 func Words(s string) []string {
 	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_'

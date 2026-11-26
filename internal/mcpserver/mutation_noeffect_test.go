@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -11,6 +12,7 @@ import (
 	"mcpshka/internal/authn"
 	"mcpshka/internal/failure"
 	"mcpshka/internal/idempotency"
+	"mcpshka/internal/toolcontract"
 )
 
 // A forge_ci call with a short SHA was refused by validation, yet its key
@@ -20,12 +22,17 @@ import (
 func TestNoEffectRefusalReleasesRetryKey(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{Name: "noeffect-test", Version: "1"}, nil)
 	r := &toolRegistry{server: server, store: idempotency.New(t.TempDir()), readers: map[string]probeHandler{}, tools: map[string]bool{}}
+	server.AddReceivingMiddleware(failureMetadata)
 	r.readers["admin_session_status"] = func(context.Context, map[string]any) (any, error) { return map[string]any{"state": "active"}, nil }
 	effects := 0
 	addTool(r, &mcp.Tool{Name: "admin_session_end", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false}}, func(_ context.Context, _ *mcp.CallToolRequest, in AdminSessionEndInput) (*mcp.CallToolResult, map[string]any, error) {
 		switch in.SessionID {
 		case "bad":
 			return nil, nil, failure.Rejected("TEST_INPUT", "test", "input rejected before any effect", errors.New("bad session"))
+		case "cache":
+			e := failure.RejectedAs(failure.Transient, failure.GoCacheMaintenance, "jobs.admission", "Go cache maintenance in progress", nil)
+			e.RetryAfterSeconds = 30
+			return nil, nil, e
 		case "boom":
 			return nil, nil, errors.New("effect may have happened")
 		}
@@ -58,6 +65,25 @@ func TestNoEffectRefusalReleasesRetryKey(t *testing.T) {
 	if r := call("good", "k1"); r.IsError {
 		content, _ := json.Marshal(r.Content)
 		t.Fatalf("corrected retry with the same key refused: %s", content)
+	}
+	first := call("cache", "cache-key")
+	replay := call("cache", "cache-key")
+	if !first.IsError || !replay.IsError || !reflect.DeepEqual(first.StructuredContent, replay.StructuredContent) || mcpErrorText(first) != mcpErrorText(replay) {
+		t.Fatalf("unstable refusal: %+v / %+v", first, replay)
+	}
+	envelope, _ := first.StructuredContent.(map[string]any)
+	if envelope["actual_effect"] != "none" || envelope["failure_layer"] != "host" || envelope["retry_allowed"] != true || envelope["retry_after_seconds"] != float64(30) || envelope["receipt"] == nil {
+		t.Fatalf("missing cache refusal evidence: %+v", envelope)
+	}
+	inputs := map[string]any{"session_id": "cache", "action": "close", "idempotency_key": "cache-key"}
+	key := mutationReceiptKey(ctx, "admin_session_end", "cache-key", inputs)
+	proof, err := toolcontract.ProbeMutation(ctx, r.store, toolcontract.MutationProbeInput{Tool: "admin_session_end", Key: "cache-key"}, toolcontract.ProbeOptions{ReceiptKey: key})
+	if err != nil || proof["actual_effect"] != "none" || proof["retry_allowed"] != true || proof["outcome"] != "rejected_before_execution" {
+		t.Fatalf("probe: %+v (%v)", proof, err)
+	}
+	st, _ := proof["receipt"].(idempotency.Status)
+	if st.State != idempotency.Failed || st.FinishedAt.IsZero() {
+		t.Fatalf("refusal is not terminal: %+v", st)
 	}
 	if effects != 1 {
 		t.Fatalf("effects = %d", effects)

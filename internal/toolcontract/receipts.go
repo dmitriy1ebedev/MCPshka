@@ -72,6 +72,17 @@ func ProbeMutation(ctx context.Context, store *idempotency.Store, in MutationPro
 	if status.State == idempotency.Completed {
 		out["outcome"] = "handler_completed"
 	}
+	if status.State == idempotency.Failed {
+		var refusal cacheRefusal
+		if _, err := store.ReadResult(key, status.Operation, status.Fingerprint, &refusal); err == nil && refusal.valid() {
+			out["outcome"] = "rejected_before_execution"
+			out["actual_effect"] = "none"
+			out["retry_allowed"] = true
+			out["retry_after_seconds"] = refusal.Failure.RetryAfterSeconds
+			out["next_safe_action"] = refusal.Failure.NextSafeAction
+			return out, nil
+		}
+	}
 	var receipt Receipt[map[string]any]
 	_, err = store.ReadResult(key, status.Operation, status.Fingerprint, &receipt)
 	if err != nil {
