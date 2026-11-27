@@ -1,0 +1,22 @@
+#!/bin/sh
+# router-motd-login (MCP-173) — вход через PAM/SSH.
+# ТОЛЬКО вывод готового снимка, никогда не запускает сборщики, systemd, сеть
+# или дочерние фоновые задания. Обновление — по router-motd-refresh.timer.
+# Все ошибки игнорируются: MOTD не должен мешать аутентификации и shell.
+# Для A/B-теста без MOTD: touch /etc/router-motd.off (отменить: rm).
+SNAP=${ROUTER_MOTD_SNAPSHOT:-/run/router-motd/snapshot}
+OFF=${ROUTER_MOTD_OFF:-/etc/router-motd.off}
+
+[ -e "$OFF" ] && exit 0
+# Root-owned snapshots are formatted, sanitized and capped by the background
+# timer. Do not run iconv, sed, probes, subprocess collectors or systemd here.
+# A single bounded head process is the only external work on the login path.
+case ${ROUTER_MOTD_COLOR:-auto} in
+  never) SNAP=${SNAP}.plain ;;
+  always) : ;;
+  *) if [ "${TERM:-}" = dumb ] || [ "${NO_COLOR+x}" = x ]; then SNAP=${SNAP}.plain; fi ;;
+esac
+if [ -f "$SNAP" ] && [ ! -L "$SNAP" ]; then
+  head -c 1024 "$SNAP" 2>/dev/null || :
+fi
+exit 0

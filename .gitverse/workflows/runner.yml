@@ -1,0 +1,40 @@
+name: MCPshka temporary pull runner
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: MCPshka HTTPS origin
+        required: true
+      token:
+        description: One-time runner registration
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: mcpshka-pull-runner-gitverse
+  cancel-in-progress: false
+jobs:
+  runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install runner tools
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends python3 sqlite3
+      - name: Pull bounded jobs
+        env:
+          MCPSHKA_RUNNER_URL: ${{ inputs.url }}
+          MCPSHKA_RUNNER_TOKEN: ${{ inputs.token }}
+          RUN_ID: ${{ gitverse.run_id }}
+        run: |
+          set +x
+          echo "::add-mask::$MCPSHKA_RUNNER_TOKEN"
+          curl -fsSL "$MCPSHKA_RUNNER_URL/runner/download/linux-$(go env GOARCH)" -o "$RUNNER_TEMP/mcpshka-runner"
+          chmod 700 "$RUNNER_TEMP/mcpshka-runner"
+          "$RUNNER_TEMP/mcpshka-runner" --url "$MCPSHKA_RUNNER_URL" --name "ci-gitverse-$RUN_ID" --conf "$RUNNER_TEMP/k.json" --idle-exit 3

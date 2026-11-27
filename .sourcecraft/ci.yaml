@@ -1,0 +1,62 @@
+# Open core CI (overlay from packaging/opencore/public): every push to the
+# public main runs vet and the full Go suite as an unprivileged user. Docker
+# Hub is unreachable from SourceCraft workers and the Yandex golang mirror is
+# Debian 11 (old git, broken sqlite3): Ubuntu 22.04 from the Yandex mirror
+# gets packages from mirror.yandex.ru and Go from proxy.golang.org.
+on:
+  push:
+    - workflows: [test]
+      filter:
+        branches: ["main"]
+
+
+workflows:
+  distributed:
+    settings:
+      max_cube_duration: 50m
+    tasks:
+      - distributed-shard
+  test:
+    settings:
+      max_cube_duration: 50m
+    tasks:
+      - go-test
+
+tasks:
+  - name: go-test
+    cubes:
+      - name: test
+        image: cr.yandex/mirror/ubuntu:22.04
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          GOVERSION: go1.26.0
+        script:
+          - sed -i 's|http://[a-z.]*archive.ubuntu.com|http://mirror.yandex.ru|g; s|http://security.ubuntu.com|http://mirror.yandex.ru|g' /etc/apt/sources.list
+          - apt-get -o Acquire::Retries=3 update
+          - apt-get install -y --no-install-recommends ca-certificates curl unzip git sqlite3 python3 python3-yaml tini passwd util-linux
+          - |
+            set -eu
+            curl -fsSL "https://proxy.golang.org/golang.org/toolchain/@v/v0.0.1-$GOVERSION.linux-amd64.zip" -o /tmp/go.zip
+            unzip -q /tmp/go.zip -d /tmp/gotc
+            gobin=$(dirname "$(find /tmp/gotc -path '*/bin/go' -type f | head -1)")
+            id ci >/dev/null 2>&1 || useradd --create-home --uid 10001 ci
+            chown -R ci:ci .
+            runuser -u ci -- env -i PATH="$gobin:/usr/bin:/bin" HOME=/home/ci LANG=C.UTF-8 GOTOOLCHAIN=local GOFLAGS=-mod=readonly go vet ./...
+            runuser -u ci -- env -i PATH="$gobin:/usr/bin:/bin" HOME=/home/ci LANG=C.UTF-8 GOTOOLCHAIN=local GOFLAGS=-mod=readonly /usr/bin/tini -s -g -- go test -p 2 -count=1 ./...
+
+  - name: distributed-shard
+    cubes:
+      - name: shard
+        image: cr.yandex/mirror/golang:1.23.5-bullseye
+        env:
+          GOTOOLCHAIN: go1.26.0
+        script:
+          - export GITHUB_WORKSPACE="$PWD"
+          - sh packaging/ci/release_shard.sh prepare
+          - python3 -m venv /tmp/mcpshka-ci-python
+          - /tmp/mcpshka-ci-python/bin/pip install --disable-pip-version-check -r packaging/native/requirements-cloud.txt
+          - runuser -u ci -- env -i PATH="/tmp/mcpshka-ci-python/bin:$PATH" HOME=/home/ci GOTOOLCHAIN=go1.26.0 go mod download
+          - runuser -u ci -- env -i PATH="/tmp/mcpshka-ci-python/bin:$PATH" HOME=/home/ci GOTOOLCHAIN=go1.26.0 SOURCECRAFT_COMMIT_REF="$SOURCECRAFT_COMMIT_REF" go run ./cmd/ci-shard sourcecraft
+        artifacts:
+          paths:
+            - report.json

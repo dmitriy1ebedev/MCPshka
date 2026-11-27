@@ -1,0 +1,13 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "MCPshka pull runner",
+      "type": "shell",
+      "command": "for d in /workspaces \"$HOME/workspace\" \"$HOME\"; do if [ -f \"$d/.mcpshka-runner/start\" ]; then sh \"$d/.mcpshka-runner/start\"; break; fi; done",
+      "runOptions": { "runOn": "folderOpen" },
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": []
+    }
+  ]
+}

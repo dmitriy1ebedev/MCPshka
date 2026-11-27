@@ -1,0 +1,34 @@
+workflow:
+  rules:
+    - if: '$MCPSHKA_DISTRIBUTED == "1"'
+    - when: never
+.distributed:
+  image: golang:1.26.0-trixie
+  tags: [appsechub]
+  timeout: 50m
+  script:
+    - |
+      export CI_SHARD="$CI_SHARD_SHARD" CI_SOURCE_COMMIT="$CI_SHARD_SOURCE_COMMIT"
+      export CI_SOURCE_TREE="$CI_SHARD_SOURCE_TREE" CI_SNAPSHOT="$CI_SHARD_SNAPSHOT"
+      export CI_PLAN_HASH="$CI_SHARD_PLAN_HASH" CI_RUN_ID="$CI_PIPELINE_ID"
+      sh .ci/distributed.sh moshub
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths: [report.json, out/distributed/]
+distributed-shard-0:
+  extends: .distributed
+  rules:
+    - if: '$MCPSHKA_DISTRIBUTED == "1" && $CI_SHARD_SHARD == "0"'
+distributed-shard-1:
+  extends: .distributed
+  rules:
+    - if: '$MCPSHKA_DISTRIBUTED == "1" && $CI_SHARD_SHARD == "1"'
+distributed-shard-2:
+  extends: .distributed
+  rules:
+    - if: '$MCPSHKA_DISTRIBUTED == "1" && $CI_SHARD_SHARD == "2"'
+distributed-shard-3:
+  extends: .distributed
+  rules:
+    - if: '$MCPSHKA_DISTRIBUTED == "1" && $CI_SHARD_SHARD == "3"'

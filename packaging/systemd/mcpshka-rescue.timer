@@ -1,0 +1,11 @@
+[Unit]
+Description=MCPshka independent tunnel recovery timer
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=15s
+AccuracySec=1s
+Unit=mcpshka-rescue.service
+
+[Install]
+WantedBy=timers.target

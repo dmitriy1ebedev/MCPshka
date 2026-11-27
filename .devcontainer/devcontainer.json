@@ -1,0 +1,5 @@
+{
+  "name": "mcpshka",
+  "image": "mcr.microsoft.com/devcontainers/go:1",
+  "postStartCommand": "sh .devcontainer/start-runner.sh"
+}

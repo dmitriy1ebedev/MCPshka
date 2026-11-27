@@ -1,0 +1,59 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Память MCPshka</title>
+<style>
+:root{color-scheme:light dark;--bg:#f6f7f9;--card:#fff;--ink:#16181d;--mute:#5d6470;--line:#dde1e7;--ok:#137a3a;--bad:#b42318;--warn:#9a6700;--acc:#2457d6}
+@media (prefers-color-scheme:dark){:root{--bg:#111318;--card:#1a1d24;--ink:#e8eaee;--mute:#9aa1ad;--line:#2c313b;--ok:#4cc27a;--bad:#ff7b6e;--warn:#e0b341;--acc:#7aa2ff}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 -apple-system,system-ui,Segoe UI,Roboto,sans-serif}
+main{max-width:860px;margin:0 auto;padding:16px}h1{font-size:22px;margin:4px 0 2px}.sub{color:var(--mute);margin:0 0 12px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px}select,input,textarea{padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit;min-width:0}
+input#q{flex:1 1 200px}textarea{width:100%;min-height:70px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}.chip{font-size:13px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--ink);min-height:0}
+.chip.on{border-color:var(--acc);color:var(--acc);font-weight:600}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin:0 0 8px;cursor:pointer}
+.row{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}.id{font:600 13px ui-monospace,Menlo,monospace;color:var(--mute)}.t{font-weight:600;flex:1 1 300px;overflow-wrap:anywhere}
+.p{font-size:12px;font-weight:700;padding:1px 7px;border-radius:6px;color:#fff}.P0{background:var(--bad)}.P1{background:var(--warn)}.P2{background:var(--acc)}.P3{background:var(--mute)}
+.st{font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px;border:1px solid currentColor;white-space:nowrap}
+.open{color:var(--bad)}.in_progress{color:var(--warn)}.fixed{color:var(--acc)}.closed{color:var(--ok)}.rejected{color:var(--mute)}
+.meta{color:var(--mute);font-size:13px;margin-top:4px;overflow-wrap:anywhere}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.45 ui-monospace,Menlo,monospace;background:var(--bg);border-radius:8px;padding:10px;max-height:60vh;overflow:auto}
+.acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}button{padding:9px 14px;border:0;border-radius:8px;background:var(--acc);color:#fff;font:inherit;font-weight:600;min-height:40px}
+button.sec{background:transparent;color:var(--acc);border:1px solid var(--acc)}button.warn{background:var(--ok)}a{color:var(--acc)}#msg{min-height:1.4em;color:var(--mute);overflow-wrap:anywhere}
+.hist{font-size:13px;color:var(--mute);margin:8px 0 0;padding-left:18px}
+@media (max-width:560px){.acts{flex-direction:column}.acts button{width:100%}}
+</style></head><body><main>
+<h1>Память</h1><p class="sub">Решения, уроки, факты и напоминания для всех ИИ. <a href="/connections">Подключения</a> · <a href="/connections/issues">Проблемы</a></p>
+<div class="bar"><input id="q" placeholder="вспомнить: слова на любом языке"></div>
+<div id="due"></div><div id="msg"></div><div id="list"></div>
+<details class="card" style="cursor:auto"><summary class="t">Записать</summary>
+<div class="bar" style="margin-top:8px"><select id="kind"><option value="note">заметка</option><option value="decision">решение</option><option value="lesson">урок</option><option value="fact">факт</option><option value="problem">проблема</option><option value="reminder">напоминание</option></select><input id="proj" placeholder="проект"><input id="at" type="datetime-local" hidden></div>
+<input id="title" placeholder="заголовок" style="width:100%;margin:0 0 8px"><textarea id="body" placeholder="что, почему, итог"></textarea>
+<div class="acts"><button id="save">Записать</button></div></details>
+<details class="card" style="cursor:auto"><summary class="t">Загрузить файл</summary>
+<p class="meta">.md и .txt попадут в память сразу (с отчётом покрытия); выгрузки чатов (.json, .zip) ждут разбора ИИ.</p>
+<input id="file" type="file"><div class="acts"><button id="up">Загрузить</button></div></details>
+</main><script>
+const $=id=>document.getElementById(id),K={decision:"решение",lesson:"урок",problem:"проблема",fact:"факт",note:"заметка",reminder:"напоминание",knowledge:"знание",chat_excerpt:"из чата"};
+function el(t,c,x){const e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e}
+function msg(t){$("msg").textContent=t||""}
+async function api(path,body){const r=await fetch("/connections/api/memory"+path,body?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}:{});
+ const j=await r.json().catch(()=>({error:"ответ не JSON"}));if(r.status===401){$("list").replaceChildren(login());throw new Error("login")}if(!r.ok)throw new Error(j.error||r.status);return j}
+function login(){const d=el("div","card");d.append(el("div","t","Нужен вход через Face ID"));const a=el("a",null,"Открыть «Подключения»");a.href="/connections";d.append(a);return d}
+function card(x){const d=el("div","card");d.style.cursor="auto";const r=el("div","row");r.append(el("span","id",K[x.kind]||x.kind),el("span","t",x.title));d.append(r);
+ const m=[x.project,x.source,x.recorded_at&&new Date(x.recorded_at).toLocaleString("ru-RU"),x.why].filter(Boolean).join(" · ");if(m)d.append(el("div","meta",m));if(x.body)d.append(el("pre",null,x.body));return d}
+async function load(){msg("");const q=$("q").value.trim();try{const j=await api(q?"?q="+encodeURIComponent(q):"");
+ const c=j.counts||{};$("due").replaceChildren();for(const x of j.due||[]){const d=card(x);d.style.borderColor="var(--warn)";const b=el("button","warn","Сделано");b.onclick=()=>close(x);const a=el("div","acts");a.append(b);d.append(a);$("due").append(d)}
+ const l=$("list");l.replaceChildren(el("div","meta",(q?"Найдено":"Последние свои записи")+" · всего своих "+(c.own||0)+", знаний "+(c.knowledge||0)));
+ for(const x of (q?j.hits:j.recent)||[])l.append(card(x));}catch(e){if(e.message!=="login")msg(e.message)}}
+async function close(x){try{await api("/write",{kind:"reminder",project:x.project,title:x.title,body:x.body,reminded:true});load()}catch(e){if(e.message!=="login")msg(e.message)}}
+$("kind").onchange=()=>{$("at").hidden=$("kind").value!=="reminder"};
+$("save").onclick=async()=>{const r={kind:$("kind").value,project:$("proj").value.trim(),title:$("title").value.trim(),body:$("body").value.trim()};
+ if(r.kind==="reminder"){if(!$("at").value){msg("укажите время напоминания");return}r.remind_at=new Date($("at").value).toISOString()}
+ try{const j=await api("/write",r);msg(j.changed?"записано":"такая запись уже есть");$("title").value=$("body").value="";load()}catch(e){if(e.message!=="login")msg(e.message)}};
+$("up").onclick=async()=>{const f=$("file").files[0];if(!f){msg("выберите файл");return}const N=9000,total=Math.max(1,Math.ceil(f.size/N));
+ const id=[...crypto.getRandomValues(new Uint8Array(12))].map(b=>b.toString(16).padStart(2,"0")).join("");let j;
+ for(let i=0;i<total;i++){const buf=new Uint8Array(await f.slice(i*N,(i+1)*N).arrayBuffer());let s="";for(const b of buf)s+=String.fromCharCode(b);
+  for(let a=0;;a++){try{j=await api("/upload",{id,seq:i,total,name:f.name,data:btoa(s)});break}catch(e){if(e.message==="login"||a>=3){msg("загрузка прервана: "+e.message);return}await new Promise(r=>setTimeout(r,1500))}}
+  msg("загружено "+Math.round((i+1)*100/total)+"%")}
+ const rep=j.import;msg(rep?"в памяти: записей "+rep.records+", новых "+rep.changed+", находится "+Math.round(rep.recall_at_3*100)+"%":(j.next||"сохранено"));load()};
+let t;$("q").oninput=()=>{clearTimeout(t);t=setTimeout(load,300)};load();
+</script></body></html>

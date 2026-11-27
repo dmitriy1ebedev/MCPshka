@@ -1,0 +1,25 @@
+# Open core CI (overlay from packaging/opencore/public): every push to the
+# public main runs vet and the full Go suite. GitHub's runner user is not
+# root, which MCPshka requires for its tests, so no user switch is needed.
+name: Open core CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: tini
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends tini
+      - name: Go vet
+        run: GOFLAGS=-mod=readonly go vet ./...
+      - name: Go tests
+        run: GOFLAGS=-mod=readonly /usr/bin/tini -s -g -- go test -p 2 -count=1 ./...
